@@ -91,10 +91,13 @@ open() {
 Handoff $gen. The session before you runs in Rex pane $REX_BLOCK. Once you have read this prompt, run \`$self close $REX_BLOCK\` in the background: it waits for that session to go idle, then closes its pane.
 EOF
 
+  # An interactive login zsh, so the successor resolves claude or codex on
+  # Billy's PATH (asdf's), not the Rex server's, which finds a stale
+  # Homebrew codex that reports no status to Rex.
   local created block
   created=$(rex split -s "$REX_SESSION" -b "$REX_BLOCK" --split=right -c "$dir" \
     --label "handoff-$gen" --focus=false --json -- \
-    env RIG_HANDOFF_GEN="$gen" HANDOFF_PROMPT="$prompt" sh -c 'exec "$@" "$(cat "$HANDOFF_PROMPT")"' sh "${cmd[@]}" \
+    env RIG_HANDOFF_GEN="$gen" HANDOFF_PROMPT="$prompt" /bin/zsh -lic 'exec "$@" "$(cat "$HANDOFF_PROMPT")"' zsh "${cmd[@]}" \
     2>&1) || fail "rex split failed: $created"
   block=$(printf '%s' "$created" | sed -n 's/.*"block_ids": *\[ *"\([^"]*\)".*/\1/p' | head -1)
   [ -n "$block" ] || block=$(printf '%s' "$created" | tr -d '\n ' | sed -n 's/.*"block_ids":\["\([^"]*\)".*/\1/p')
