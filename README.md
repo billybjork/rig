@@ -71,3 +71,12 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
 The audit behind this (Sprite failure modes, duplication, secrets) is in the
 session of 2026-10-28; the Sprite gate's open items are in
 `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`.
+
+## Where we are (2026-10-28)
+
+Done: this repository; the shared guide and `handoff` skill; Rex config moved
+in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
+every `.env` deleted, `.env.example` kept; shipyard's worker reads the deploy
+tier; agents' deny rules); shells in background terminals (`bin/bg`,
+shipyard's watch, the palette's Show and Hide). Next: rigd (step 2), then the
+fleet with shipyard moved in (step 3), then agents on Sprites (step 5).
