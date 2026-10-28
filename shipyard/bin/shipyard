@@ -65,6 +65,16 @@ mix_in() {
   (cd "$dir" && unset MIX_ENV && mix "$@")
 }
 
+# The numbers of repository $1's PRs labeled `ship`, open or merged.
+queued() {
+  gh api graphql -F owner="${1%/*}" -F name="${1#*/}" -f query='
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        pullRequests(states: [OPEN, MERGED], labels: ["ship"], first: 50) { nodes { number } }
+      }
+    }' --jq '.data.repository.pullRequests.nodes[].number'
+}
+
 start() {
   local if_queued=false
   project "${1:-}"
@@ -94,8 +104,10 @@ start() {
   fi
 
   # A labeled PR is open in the queue, or merged and waiting for its roll.
-  if [ "$if_queued" = true ] &&
-    [ -z "$(gh pr list --repo "$slug" --label ship --state all --json number,state --jq '.[] | select(.state != "CLOSED") | .number')" ]; then
+  # The worker's own query (Shipyard.GitHub.queue): `gh pr list --label`
+  # goes through GitHub's search index, which kept matching a PR whose
+  # label had come off (soco #302), so every poll started a worker for it.
+  if [ "$if_queued" = true ] && [ -z "$(queued "$slug")" ]; then
     exit 0
   fi
 
