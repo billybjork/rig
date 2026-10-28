@@ -97,11 +97,9 @@ shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
 launchd with Activity, Presence, Awake, Notify, and RexBadges; it replaced
 `com.billy.rex-bg-shells`.
 
-Waiting on Billy: the sudoers rule (`bin/rigd sudoers`, asks for his
-password) before lid-closed keep-awake works, and `rig-NTFY_TOPIC` in
-Bitwarden's deploy project before Notify pushes (until then it logs each
-push it would send). Once the rule is in, Amphetamine and the manual
-`caffeinate -dimsu` can go.
+The sudoers rule is installed (lid-closed keep-awake works) and
+`rig-NTFY_TOPIC` is set (Notify pushes; tested). Billy's manual
+`caffeinate -dimsu` and Amphetamine are no longer needed.
 
 Next: the fleet with shipyard moved in (step 3; rigd's `Fleet` and ship
 pushes through Notify come with it), then agents on Sprites (step 5).
