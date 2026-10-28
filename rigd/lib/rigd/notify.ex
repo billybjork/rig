@@ -3,8 +3,8 @@ defmodule Rigd.Notify do
   While Billy is away (Presence), one ntfy push per finished task on one
   topic: an agent that stops working (after 20s, so a turn that resumes
   sends nothing), or one that waits on him (blocked for 15s). While he is
-  present it sends nothing; Rex's own marks show it. Ships still push from
-  the ship worker.
+  present it sends nothing; Rex's own marks show it. Ships push from the ship
+  worker, which reads Presence from the status file (`Rigd.Status`).
 
   The topic is `NTFY_TOPIC` from rigd's `fnox.toml` (deploy tier); it never
   enters rigd: each push runs curl under `fnox exec`. Without it, rigd logs
@@ -46,6 +46,15 @@ defmodule Rigd.Notify do
   def still?(:done, state), do: state not in ["working", "blocked"]
   def still?(:blocked, state), do: state == "blocked"
 
+  @doc """
+  Whether the push scheduled as `ref` goes: still the latest for its block,
+  its agent still there and in the state it was scheduled for, and Billy away.
+  """
+  def fire?(st, block, kind, ref) do
+    agent = st.agents[block]
+    st.pending[block] == ref and agent != nil and still?(kind, agent.state) and st.away
+  end
+
   def message(:done, a), do: {"#{a.session}: #{a.app} finished", where(a)}
 
   def message(:blocked, a),
@@ -85,7 +94,7 @@ defmodule Rigd.Notify do
   def handle_info({:fire, block, kind, ref}, st) do
     agent = st.agents[block]
 
-    if ((st.pending[block] == ref and agent) && still?(kind, agent.state)) and st.away do
+    if fire?(st, block, kind, ref) do
       {title, body} = message(kind, agent)
       Task.start(fn -> push(title, body) end)
     end

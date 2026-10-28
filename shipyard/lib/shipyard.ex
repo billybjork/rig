@@ -18,7 +18,9 @@ defmodule Shipyard do
   environment; the tests build their own. `ntfy_topic` comes from the app's
   config, which only `config/runtime.exs` outside the test environment
   fills (`Shipyard.Notify`), and `status`, the terminal the worker reports
-  to (`Shipyard.Status`), is the app's config too: none in the tests.
+  to (`Shipyard.Status`), and `presence`, rigd's status file, which says
+  whether Billy is away (`Shipyard.Notify`), are the app's config too: none
+  in the tests.
 
   The project's file names what differs between projects:
 
@@ -55,6 +57,7 @@ defmodule Shipyard do
     :tier,
     :roll_command,
     :status,
+    :presence,
     history: [],
     merge: "squash",
     ntfy_url: "https://ntfy.sh",
@@ -90,6 +93,7 @@ defmodule Shipyard do
         roll: Path.join(home, "roll"),
         ntfy_topic: Application.get_env(:shipyard, :ntfy_topic),
         status: Application.get_env(:shipyard, :status),
+        presence: Application.get_env(:shipyard, :presence),
         desktop: :os.type() == {:unix, :darwin}
       },
       Keyword.merge(Map.to_list(project), overrides)

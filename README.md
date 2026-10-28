@@ -45,8 +45,9 @@ be copied between repositories lives here.
   project's ship command runs `~/dev/rig/shipyard/bin/shipyard`; a worker
   runs from its own clone of rig's `main`; the LaunchAgent
   `com.billy.shipyard` polls the queues (`bin/shipyard install`). A ship's
-  end pushes on rig's topic (`shipyard/fnox.toml`, `rig-NTFY_TOPIC`),
-  always, and rigd never pushes for a ship.
+  end pushes on rig's topic (`shipyard/fnox.toml`, `rig-NTFY_TOPIC`) only
+  while Billy is away, as rigd's status file says (pushing when rigd is
+  not running), and rigd never pushes for a ship.
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 

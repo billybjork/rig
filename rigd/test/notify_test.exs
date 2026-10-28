@@ -35,6 +35,17 @@ defmodule Rigd.NotifyTest do
     refute Notify.still?(:blocked, "idle")
   end
 
+  test "a due push goes only while it is the latest, its agent is there, and Billy is away" do
+    ref = make_ref()
+    st = %{agents: %{"a" => %{state: "idle"}}, pending: %{"a" => ref}, away: true}
+
+    assert Notify.fire?(st, "a", :done, ref)
+    refute Notify.fire?(st, "a", :done, make_ref())
+    refute Notify.fire?(%{st | away: false}, "a", :done, ref)
+    # Its pane closed before the push was due.
+    refute Notify.fire?(%{st | agents: %{}}, "a", :done, ref)
+  end
+
   test "names the session and the tab" do
     a = %{
       session: "soco",

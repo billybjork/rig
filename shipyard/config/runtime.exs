@@ -10,4 +10,8 @@ if config_env() != :test do
   # terminal that `bin/shipyard start` names, else the controlling one. The
   # tests report nowhere.
   config :shipyard, status: System.get_env("SHIPYARD_STATUS_TTY") || "/dev/tty"
+
+  # rigd's status file: a ship pushes only while Billy is away
+  # (Shipyard.Notify). The tests give their own or none.
+  config :shipyard, presence: Path.expand("~/Library/Caches/rigd/status.json")
 end

@@ -83,13 +83,15 @@ in the project.
   landed but not live, or sent back, one message each; a retry is not an
   end and sends nothing. Each is one push to ntfy.sh on rig's one topic,
   `RIG_NTFY_TOPIC` (`fnox.toml` here; key `rig-NTFY_TOPIC`, which rigd
-  pushes on too, though never for a ship), whether Billy is away or not,
-  and a macOS notification, each naming the project, the PR's number and title, the outcome, what rolled,
+  pushes on too, though never for a ship), only while Billy is away, and a
+  macOS notification always, each naming the project, the PR's number and title, the outcome, what rolled,
   and the branch, never code, logs or the digest. The topic's secrecy is
   the only access control: it stays in Bitwarden, out of logs, and the tests
   never read it. A notification never holds a ship: without the topic the
   worker logs a warning at start and sends no push, and a failed push is
-  one warning line.
+  one warning line. Away is what rigd's status file
+  (`~/Library/Caches/rigd/status.json`) says; with no file, or rigd not
+  running, the push goes.
 - **Reading it.** `bin/shipyard wait <project> <pr>` waits silently until
   the label is off, prints the newest result, and exits 0 only on `live`.
   `bin/shipyard watch <project> <pr>` runs that wait in a Rex background

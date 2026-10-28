@@ -1,7 +1,9 @@
 defmodule Shipyard.Notify do
   @moduledoc """
-  Tells Billy a ship has ended: one push through ntfy.sh to his private
-  topic, and a macOS notification on the laptop. Each carries the PR's
+  Tells Billy a ship has ended: a macOS notification on the laptop, and,
+  while he is away, one push through ntfy.sh to his private topic. Away is
+  what rigd's status file says (`presence`); with no file, an unreadable
+  one, or rigd not running, he may be away, so the push goes. Each carries the PR's
   number and title, the outcome, what rolled, and the branch, never code,
   logs or the digest; those stay on the PR and in `bin/shipyard list`.
 
@@ -37,6 +39,23 @@ defmodule Shipyard.Notify do
   defp push(%Shipyard{ntfy_topic: nil}, _pr, _outcome, _title, _message), do: :ok
 
   defp push(ship, pr, outcome, title, message) do
+    if present?(ship), do: :ok, else: send_push(ship, pr, outcome, title, message)
+  end
+
+  @doc "Whether rigd, still running, last saw Billy at the laptop."
+  def present?(%Shipyard{presence: nil}), do: false
+
+  def present?(%Shipyard{presence: path} = ship) do
+    with {:ok, body} <- File.read(path),
+         {:ok, %{"pid" => pid, "presence" => %{"away" => false}}} <- JSON.decode(body),
+         {_, 0} <- Cmd.run(ship, ship.home, "kill", ["-0", to_string(pid)]) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp send_push(ship, pr, outcome, title, message) do
     json =
       JSON.encode!(%{
         topic: ship.ntfy_topic,

@@ -425,6 +425,41 @@ defmodule Shipyard.WorkerTest do
     assert [%{outcome: "back", cause: "conflict", gate: ""}] = rows(o)
   end
 
+  # rigd's status file, as `Rigd.Status` writes it, from rigd at `pid`.
+  defp presence!(dir, away, pid) do
+    path = Path.join(dir, "rigd-status.json")
+    File.mkdir_p!(dir)
+    File.write!(path, JSON.encode!(%{pid: pid, presence: %{away: away}}))
+    path
+  end
+
+  test "while rigd sees Billy at the laptop a ship's end is only the macOS notification",
+       %{tmp_dir: tmp} do
+    o = setup_origin(tmp, [], presence: presence!(tmp, false, System.pid()))
+    queue!(o, 7, "claude/conflict", "lib/app.ex", "2026-10-09T10:00:00Z")
+    advance_main!(o, "lib/app.ex")
+
+    drain!(o)
+
+    assert ["comment 7", "unlabel 7", "notify " <> _] = events(o)
+  end
+
+  for {scene, away, pid} <- [
+        {"while Billy is away", true, :rigd},
+        {"while rigd is not running to say otherwise", false, "99999999"}
+      ] do
+    test "a ship pushes #{scene}", %{tmp_dir: tmp} do
+      pid = if(unquote(pid) == :rigd, do: System.pid(), else: unquote(pid))
+      o = setup_origin(tmp, [], presence: presence!(tmp, unquote(away), pid))
+      queue!(o, 7, "claude/conflict", "lib/app.ex", "2026-10-09T10:00:00Z")
+      advance_main!(o, "lib/app.ex")
+
+      drain!(o)
+
+      assert ["comment 7", "unlabel 7", "push " <> _, "notify " <> _] = events(o)
+    end
+  end
+
   test "a failed roll ends the ship landed but not live", %{tmp_dir: tmp} do
     o = setup_origin(tmp, [{"DEPLOY_EXIT", "1"}])
     queue!(o, 7, "claude/roll", "lib/a.ex", "2026-10-09T10:00:00Z")
