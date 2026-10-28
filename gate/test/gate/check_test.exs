@@ -1,0 +1,260 @@
+defmodule Gate.CheckTest do
+  # The fake CLI is on PATH and its Sprites in $FAKE_SPRITES, both global.
+  use ExUnit.Case, async: false
+
+  alias Gate.Fake
+
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: tmp} = context do
+    env = Fake.setup(tmp, ~w(gate-1 gate-2 gate-3), Map.get(context, :gate, %{}))
+    on_exit(fn -> Fake.stop(env.root) end)
+    env
+  end
+
+  defp check(%{top: top}, parts) do
+    Fake.parts(top, parts)
+    Fake.capture(fn -> Gate.Check.main(Fake.config(top), []) end)
+  end
+
+  defp log(%{logs: logs}, sprite, part) do
+    [file] = Path.wildcard(Path.join(logs, "#{sprite}-*-#{part}.log"))
+    File.read!(file)
+  end
+
+  test "green when every part is: one Sprite each, the spare unused, the row in the worker's format",
+       env do
+    {status, out, err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert out == ""
+    assert err =~ "as 2 parts on gate-1 gate-2, spare gate-3"
+    assert err =~ "green in"
+
+    [row] = Fake.rows(env.logs)
+    assert [_at, sha, "check", "green", _wall, static, test] = String.split(row, "\t")
+    assert sha =~ ~r/\A[0-9a-f]{40}\z/
+    assert static =~ ~r/\Astatic:\d+:gate-1:green\z/
+    assert test =~ ~r/\Atest-1:\d+:gate-2:green\z/
+
+    log = log(env, "gate-1", "static")
+    # A fresh Sprite has no stamp: it takes the commit's tools first.
+    assert log =~ "refreshing tools"
+    assert log =~ "provisioning"
+    assert log =~ "setup ran"
+    assert log =~ "all good"
+    assert Gate.Sprite.last_line(log) == "sprite-gate: exit 0"
+  end
+
+  test "a red part fails the gate, never reruns, and prints a digest of its failing tests", env do
+    {status, out, _err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh red"}])
+
+    assert status == 1
+    assert out =~ "== test-1 on gate-2 (exit 1)"
+    assert out =~ "1) test the widget works (WidgetTest)"
+    assert out =~ "3 tests, 1 failure"
+    [row] = Fake.rows(env.logs)
+    assert row =~ "\tred\t"
+    assert row =~ ~r/test-1:\d+:gate-2:red$/
+    refute File.exists?(Path.join(env.root, "gate-3/home/parts"))
+  end
+
+  test "a Sprite that cannot take the part: it reruns on the spare, and the gate says so", env do
+    File.touch!(Path.join(env.root, "gate-2/down"))
+
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert err =~ "test-1: gate-2 failed"
+    assert err =~ "rerunning on gate-3"
+    [row] = Fake.rows(env.logs)
+    assert row =~ ~r/test-1:\d+:gate-3:green:reran-from-gate-2$/
+  end
+
+  test "no verdict when a second Sprite fails: neither green nor red", env do
+    File.touch!(Path.join(env.root, "gate-1/down"))
+    File.touch!(Path.join(env.root, "gate-2/down"))
+
+    {status, out, err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 2
+    assert out == ""
+    assert err =~ "no verdict"
+    [row] = Fake.rows(env.logs)
+    assert row =~ "\tnone\t"
+    assert row =~ "sprite-failed"
+  end
+
+  test "a native crash reruns on the spare and is judged there", env do
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh crash-once"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert err =~ "a process crashed on gate-1"
+    [row] = Fake.rows(env.logs)
+    assert row =~ ~r/static:\d+:gate-3:green:reran-from-gate-1/
+    assert log(env, "gate-1", "static") =~ "a native crash, not a gate result; reran on gate-3"
+  end
+
+  @tag gate: %{"limits" => %{"poll" => 0.1, "run" => 2, "unreachable" => 5, "launch" => 10}}
+  test "a part past its run limit is ended on its Sprite and reruns on the spare", env do
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh slow-once"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert err =~ "its run phase outlasted 2 s"
+    # Ended there, not left running: its command never got to its end.
+    Process.sleep(500)
+    refute log(env, "gate-1", "static") =~ "never"
+    {ps, _} = System.cmd("pgrep", ["-f", Path.join(env.root, "gate-1")])
+    assert ps |> String.split() |> Enum.reject(&tail_client?/1) == []
+  end
+
+  test "a Sprite that restarts mid-part fails it, and the part reruns on the spare", env do
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh restart-once"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert err =~ "restarted mid-part (life life-1, now life-"
+    [row] = Fake.rows(env.logs)
+    assert row =~ "reran-from-gate-1"
+  end
+
+  test "a Sprite that stops answering mid-part fails it after the unreachable limit", env do
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh vanish-once"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert err =~ "unreachable for 2 s"
+    [row] = Fake.rows(env.logs)
+    assert row =~ "reran-from-gate-1"
+  end
+
+  test "a keeper that goes is relaunched, and the part runs on", env do
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh drop-keeper"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    log = log(env, "gate-1", "static")
+    assert log =~ "outlived its keeper"
+    assert log =~ "its keeper had gone; relaunched it"
+    refute Fake.rows(env.logs) |> hd() =~ "reran"
+  end
+
+  @tag gate: %{
+         "warm" => [
+           %{
+             "name" => "plt",
+             "parts" => ["static*"],
+             "key" => ["cmd.sh"],
+             "command" => "bash cmd.sh warm 3"
+           }
+         ],
+         "limits" => %{"poll" => 0.1, "run" => 2, "unreachable" => 5, "launch" => 10}
+       }
+  test "a warm cache builds before its part, outside the run limit, once per key; a restart while warming relaunches it on the same Sprite",
+       env do
+    File.touch!(Path.join(env.root, "warm-restarted"))
+    parts = [{"static-1", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}]
+    {status, _out, err} = check(env, parts)
+    # The cache took 3 s; the run limit is 2.
+    assert status == 0, err
+    assert File.read!(Path.join(env.root, "warms")) == "warm run\n"
+    log = log(env, "gate-1", "static-1")
+    assert log =~ "warmed plt"
+    refute log(env, "gate-2", "test-1") =~ "warming plt"
+
+    # The same key: no build.
+    {0, _, _} = check(env, parts)
+    assert File.read!(Path.join(env.root, "warms")) == "warm run\n"
+
+    # A restart while warming: the part relaunches where the cache was half built.
+    File.rm!(Path.join(env.root, "warm-restarted"))
+    File.write!(Path.join(env.top, "cmd.sh"), File.read!(Path.join(env.top, "cmd.sh")) <> "\n")
+
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "a new key"])
+
+    {status, _out, err} = check(env, parts)
+    assert status == 0, err
+    assert err =~ "gate-1 restarted while warming; relaunching it there"
+    assert File.read!(Path.join(env.root, "warms")) == "warm run\nwarm run\nwarm run\n"
+    assert List.last(Fake.rows(env.logs)) =~ ~r/static-1:\d+:gate-1:green\t/
+  end
+
+  test "the stamp is the hash of the stamp files at the commit, in order, as the old pools' was",
+       env do
+    expected =
+      :crypto.hash(:sha256, [
+        File.read!(Path.join(env.top, ".tool-versions")),
+        File.read!(Path.join(env.top, "provision.sh"))
+      ])
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 16)
+
+    sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
+    assert Gate.Stamp.stamp(Fake.config(env.top), sha) == expected
+  end
+
+  test "bin/gate holds the pool's lock and runs the gate in the checkout", env do
+    Fake.parts(env.top, [{"static", "bash cmd.sh green"}])
+
+    {out, status} =
+      System.cmd(Path.join(Gate.Sprite.root(), "bin/gate"), ["check"],
+        cd: env.top,
+        stderr_to_stdout: true
+      )
+
+    assert status == 0, out
+    assert out =~ "check-remote: green in"
+    assert File.exists?(Path.join(env.tmp, "locks"))
+  end
+
+  test "a gate stopped from outside ends the parts it launched on their Sprites", env do
+    Fake.parts(env.top, [{"static", "bash cmd.sh slow-once"}])
+    gate = Path.join(Gate.Sprite.root(), "bin/gate")
+
+    port =
+      Port.open({:spawn_executable, gate}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: ["check"],
+        cd: env.top,
+        env: [{~c"GATE_POOL_HELD", ~c"1"}]
+      ])
+
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    job = Path.join(env.root, "gate-1/home/parts")
+
+    wait_until(fn ->
+      match?([_], Path.wildcard(Path.join(job, "*/phase"))) and
+        File.read!(hd(Path.wildcard(Path.join(job, "*/phase")))) =~ "run"
+    end)
+
+    System.cmd("kill", ["-TERM", to_string(pid)])
+    assert_receive {^port, {:exit_status, 143}}, 20_000
+    [pidfile] = Path.wildcard(Path.join(job, "*/job.pid"))
+
+    {_, status} =
+      System.cmd("kill", ["-0", File.read!(pidfile) |> String.trim()], stderr_to_stdout: true)
+
+    assert status != 0, "the part still runs on its Sprite"
+  end
+
+  defp wait_until(fun, tries \\ 200) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> flunk("never happened")
+      true -> Process.sleep(100) && wait_until(fun, tries - 1)
+    end
+  end
+
+  defp tail_client?(pid) do
+    {cmd, _} = System.cmd("ps", ["-o", "command=", "-p", pid])
+    cmd =~ "tail -f"
+  end
+end

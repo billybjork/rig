@@ -1,0 +1,29 @@
+#!/usr/bin/perl
+# Every `sprite` call rewrites ~/.sprites/sprites.json in place, so parallel
+# calls (one project's gate beside another's) can leave a shorter write's
+# JSON followed by the tail of a longer one. The CLI then reads it as a v0
+# config, fails to migrate it, and every exec exits 1 in a second, which
+# looks like the whole pool failing. This cuts such a tail; on anything
+# worse it exits 2 saying so.
+use strict;
+use warnings;
+use JSON::PP;
+
+my $path = ($ENV{HOME} // "") . "/.sprites/sprites.json";
+exit 0 unless -f $path;
+open my $in, "<", $path or die "cannot read $path: $!\n";
+my $text = do { local $/; <$in> };
+close $in;
+my ($data, $used) = eval { JSON::PP->new->decode_prefix($text) };
+unless (ref $data eq "HASH") {
+  print STDERR "$path is not JSON; the sprite CLI cannot run until it is fixed by hand\n";
+  exit 2;
+}
+my $tail = substr $text, $used;
+exit 0 if $tail =~ /\A\s*\z/;
+open my $out, ">", "$path.repair" or die "cannot write $path.repair: $!\n";
+print $out substr($text, 0, $used);
+close $out or die "cannot write $path.repair: $!\n";
+chmod 0600, "$path.repair";
+rename "$path.repair", $path or die "cannot replace $path: $!\n";
+printf STDERR "sprite-config: cut %d stray byte(s) from %s (a parallel write)\n", length $tail, $path;

@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+# deadline <seconds> [--in <file>] <command...>
+#
+# Runs the command for at most <seconds>; past that it exits 142, as an
+# alarm would. The sprite CLI survives SIGALRM and SIGTERM for 5 s and more,
+# so the limit is kept from out here: the command runs in its own process
+# group, which gets a TERM and, $GATE_KILL_GRACE seconds later (5), a KILL.
+# A TERM or INT to this process stops the group the same way (143, 130), so
+# killing the caller's job ends the exec and anything it started (`script`
+# and the CLI under it). Its stdin is <file>, or /dev/null, so a command
+# never reads the caller's; `--in -` keeps the caller's.
+use strict;
+use warnings;
+use POSIX ();
+
+my $secs = shift // die "usage: deadline <seconds> [--in <file>] <command...>\n";
+my $in = "/dev/null";
+if (@ARGV && $ARGV[0] eq "--in") { shift; $in = shift; }
+@ARGV or die "usage: deadline <seconds> [--in <file>] <command...>\n";
+my $grace = $ENV{GATE_KILL_GRACE} // 5;
+
+my $pid = fork // die "deadline: fork: $!\n";
+unless ($pid) {
+  setpgrp(0, 0);
+  if ($in ne "-") { open STDIN, "<", $in or die "deadline: $in: $!\n" }
+  exec @ARGV or die "deadline: $ARGV[0]: $!\n";
+}
+
+sub stop {
+  my ($code) = @_;
+  kill "TERM", -$pid;
+  for (1 .. $grace * 10) {
+    if (waitpid($pid, POSIX::WNOHANG()) > 0) { kill "KILL", -$pid; exit $code }
+    select undef, undef, undef, 0.1;
+  }
+  kill "KILL", -$pid;
+  waitpid $pid, 0;
+  exit $code;
+}
+$SIG{ALRM} = sub { stop(142) };
+$SIG{TERM} = sub { stop(143) };
+$SIG{INT} = sub { stop(130) };
+alarm $secs;
+waitpid $pid, 0;
+my $status = $?;
+# The group may hold what the command left running (a pipe's other end).
+kill "KILL", -$pid;
+exit($status & 127 ? 128 + ($status & 127) : $status >> 8);

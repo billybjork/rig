@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# One gate at a time on this machine, shared by every project in ~/dev
+# (rig's gate/README.md). A project's gate-lock script execs this one.
+#
+#   lock <command...>   run the command as the machine's gate
+#   lock --status       who holds the gate, for how long, and who waits
+#   lock --acquire $$   take the lock for the calling script and print the
+#                       pid it records (the caller exports it as
+#                       DEV_GATE_LOCK_HELD)
+#   lock --held         exit 0 when $DEV_GATE_LOCK_HELD holds the lock, so
+#                       the caller runs under a gate
+#   lock --release      drop it (a no-op unless the caller holds it)
+#
+# A full gate on the laptop uses every core, so several at once finish no
+# sooner than one after the other, and under that load timing-sensitive
+# tests fail. The same protocol on its own file keeps one user per Sprite
+# pool (`gate check`, `gate pool`) and per dev Sprite (`gate run`).
+#
+# The lock is a file at ~/.cache/dev-gate/lock ($DEV_GATE_LOCK overrides it)
+# published atomically, holding "<pid>\n<cwd>\n", so every repository on the
+# laptop queues on the same lock. A waiter prints the holder and polls, and
+# leaves a ticket in waiting/<pid> beside the lock (its cwd) until it holds
+# the lock or exits, so `--status` can show the queue; live waiters enter in
+# arrival order. Dead holders and waiters are reclaimed. Re-entrant: the
+# holder exports DEV_GATE_LOCK_HELD=<its pid>, and a call from under it runs
+# directly. A queued command can wait for several gates, so run it in the
+# background and let it.
+set -euo pipefail
+
+lock="${DEV_GATE_LOCK:-$HOME/.cache/dev-gate/lock}"
+waiting="$(dirname "$lock")/waiting"
+poll=3
+
+holder_pid() { sed -n 1p "$lock" 2>/dev/null || true; }
+holder_cwd() { sed -n 2p "$lock" 2>/dev/null || true; }
+minutes_since() { # $1: a file; its age in whole minutes
+  local since
+  # GNU stat first: BSD stat rejects -c, but GNU stat accepts -f (the file
+  # system's status) and prints that where the mtime should be.
+  since=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || date +%s)
+  echo $((($(date +%s) - since) / 60))
+}
+alive() { kill -0 "$1" 2>/dev/null; }
+
+# The caller already holds the lock: its pid is in the file and still running.
+held_by_caller() {
+  [ -n "${DEV_GATE_LOCK_HELD:-}" ] && [ "$(holder_pid)" = "$DEV_GATE_LOCK_HELD" ] && alive "$DEV_GATE_LOCK_HELD"
+}
+
+acquire() { # $1: the pid the lock records
+  local pid=$1 waited=0 other oldest entry ticket="$waiting/$1"
+  local candidate="$lock.holder-$1"
+  mkdir -p "$waiting"
+  printf '%s\n' "$PWD" >"$ticket"
+  printf '%s\n%s\n' "$pid" "$PWD" >"$candidate"
+  while true; do
+    alive "$pid" || { rm -f "$ticket" "$candidate"; exit 1; }
+    for entry in "$waiting"/[0-9]*; do
+      [ -f "$entry" ] || continue
+      other=$(basename "$entry")
+      alive "$other" || rm -f "$entry" "$lock.holder-$other"
+    done
+    oldest=$(ls -tr "$waiting" | head -n 1)
+    # Only the oldest live waiter attempts admission or stale-lock recovery.
+    # Linking a complete record publishes it atomically; no half-written lock.
+    if [ "$oldest" = "$pid" ]; then
+      if ln "$candidate" "$lock" 2>/dev/null; then break; fi
+      other=$(holder_pid)
+      if [ -n "$other" ] && ! alive "$other"; then
+        echo "gate: reclaiming a stale lock left by pid $other ($(holder_cwd))" >&2
+        rm -f "$lock"
+        continue
+      fi
+    fi
+    if [ $((waited % 60)) = 0 ]; then
+      other=$(holder_pid)
+      if [ -n "$other" ]; then
+        echo "gate: waiting; $(holder_cwd) (pid $other) has held the gate for $(minutes_since "$lock") min" >&2
+      else
+        echo "gate: waiting for earlier ticket $oldest" >&2
+      fi
+    fi
+    sleep "$poll"
+    waited=$((waited + poll))
+  done
+  rm -f "$ticket" "$candidate"
+}
+
+release() { # $1: the pid the lock must record for this to remove it
+  rm -f "$waiting/$1"
+  [ "$(holder_pid)" = "$1" ] && rm -f "$lock"
+  return 0
+}
+
+status() {
+  local pid n=0 ticket
+  pid=$(holder_pid)
+  if [ -z "$pid" ]; then
+    echo "gate: free"
+  elif alive "$pid"; then
+    echo "gate: held by $(basename "$(holder_cwd)") (pid $pid) for $(minutes_since "$lock") min"
+  else
+    echo "gate: stale lock left by pid $pid ($(holder_cwd)); the next gate reclaims it"
+  fi
+  # Tickets in arrival order; one whose process is gone is dropped.
+  for ticket in $(ls -tr "$waiting" 2>/dev/null); do
+    if alive "$ticket"; then
+      n=$((n + 1))
+      echo "gate: waiting $n: $(basename "$(cat "$waiting/$ticket")") (pid $ticket) for $(minutes_since "$waiting/$ticket") min"
+    else
+      rm -f "$waiting/$ticket"
+    fi
+  done
+}
+
+case "${1:-}" in
+--status)
+  status
+  ;;
+--acquire)
+  if held_by_caller; then
+    echo "$DEV_GATE_LOCK_HELD"
+  else
+    acquire "${2:-$PPID}"
+    holder_pid
+  fi
+  ;;
+--held)
+  held_by_caller
+  ;;
+--release)
+  release "${DEV_GATE_LOCK_HELD:-$PPID}"
+  ;;
+"" | --*)
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 64
+  ;;
+*)
+  if held_by_caller; then
+    exec "$@"
+  fi
+  trap 'release $$' EXIT
+  trap 'exit 130' INT TERM
+  acquire "$$"
+  export DEV_GATE_LOCK_HELD=$$
+  # A signal to this script reaches the command too (the ship worker's
+  # timeout is an alarm to the gate it started), so nothing runs on after
+  # the lock is gone. The command's stdin is /dev/null.
+  "$@" &
+  child=$!
+  for sig in TERM INT HUP ALRM; do
+    trap "kill -$sig $child 2>/dev/null; wait $child; exit $((128 + $(kill -l $sig)))" $sig
+  done
+  status=0
+  wait "$child" || status=$?
+  exit "$status"
+  ;;
+esac

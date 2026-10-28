@@ -277,7 +277,9 @@ run_worker() {
     done <"$primary/.env"
   fi
   unset MIX_ENV
-  export SHIPYARD_CONFIG=$home/repo/.shipyard.json SHIPYARD_HOME=$home
+  # RIG: rig as of this start, so a project's gate runs rig's gate runner
+  # (gate/bin/gate) from the same commit as the worker.
+  export SHIPYARD_CONFIG=$home/repo/.shipyard.json SHIPYARD_HOME=$home RIG=$home/app
   keep=()
   command -v caffeinate >/dev/null && keep=(caffeinate -i)
   exec ${secrets[@]+"${secrets[@]}"} ${keep[@]+"${keep[@]}"} mix run --no-halt

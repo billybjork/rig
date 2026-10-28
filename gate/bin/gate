@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# rig's gate runner, run in a project checkout with a .gate.json (rig's
+# gate/README.md):
+#
+#   gate check [tier]           the split gate on HEAD, on the project's Sprite pool
+#   gate run <command...>       a command on the working tree, on a dev Sprite
+#   gate pool status|provision|rebuild|exec|warm   the pool's Sprites
+#   gate times                  rewrite the suite's partition weights
+#   gate stamp                  HEAD's provision stamp
+#   gate lock ...               the machine's gate lock (libexec/lock)
+#   gate self-check             the runner's own gate
+#
+# A gate and every pool command but status hold the pool's lock, and a run
+# its dev Sprite's (the protocol of libexec/lock, on files under the
+# project's `locks`), so two never share a Sprite.
+set -euo pipefail
+gate=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+case "${1:-}" in
+  lock) shift; exec "$gate/libexec/lock" "$@" ;;
+  self-check) cd "$gate" && unset MIX_ENV && exec mix check ;;
+  "" | -h | --help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
+esac
+
+top=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "gate: run it in a project checkout" >&2; exit 2; }
+config=$top/.gate.json
+[ -f "$config" ] || { echo "gate: $config is missing" >&2; exit 2; }
+
+# Re-runs this command under lock file $1 (under the project's `locks`),
+# marked held by variable $2 so the re-run goes on.
+hold() {
+  local lock=$1 held=$2 locks
+  shift 2
+  [ "${!held:-}" != 1 ] || return 0
+  locks=$(jq -er .locks "$config")
+  locks=${locks/#\~/$HOME}
+  mkdir -p "$locks"
+  exec env DEV_GATE_LOCK="$locks/$lock" DEV_GATE_LOCK_HELD= "$held=1" "$gate/libexec/lock" "$0" "$@"
+}
+case "${1:-} ${2:-}" in
+  "pool status" | "pool " | "times "* | "stamp "*) ;;
+  "check "* | "pool "*) hold pool.lock GATE_POOL_HELD "$@" ;;
+  "run "*) hold "${GATE_DEV_SPRITE:-$(jq -er '.dev[0]' "$config")}.lock" GATE_DEV_HELD "$@" ;;
+esac
+unset DEV_GATE_LOCK
+
+# rig's toolchain (gate/.tool-versions), not the project's: the Elixir
+# side runs from here, and $GATE_CWD names the checkout.
+cd "$gate"
+unset MIX_ENV
+mix compile --no-deps-check >&2
+
+# A gate stopped from outside (a closed terminal, the worker's timeout)
+# ends the parts it launched, which would otherwise run on and share their
+# Sprites with the pool's next user. The runner lists each part it launches
+# in $GATE_PARTS_FILE as "<sprite> <id>".
+parts=$(mktemp "${TMPDIR:-/tmp}/gate-parts.XXXXXX")
+GATE_CWD=$top GATE_PARTS_FILE=$parts mix run --no-compile --no-deps-check --no-start \
+  -e 'Gate.CLI.main(System.argv())' -- "$@" &
+pid=$!
+stop() {
+  trap '' TERM INT HUP
+  kill -TERM "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  while read -r sprite id; do
+    echo "gate: ending $id on $sprite" >&2
+    "$gate/libexec/deadline" 30 "${GATE_SPRITE_CLI:-sprite}" -s "$sprite" exec -- bash -c '
+      for f in ~/parts/"$1"/job.pid ~/parts/"$1"/keeper.pid; do
+        p=$(cat "$f" 2>/dev/null) && kill -KILL -- "-$p" 2>/dev/null
+      done; true' stop "$id" >/dev/null 2>&1 &
+  done <"$parts"
+  wait
+  rm -f "$parts"
+  exit "$1"
+}
+trap 'stop 143' TERM
+trap 'stop 130' INT
+trap 'stop 129' HUP
+trap 'stop 142' ALRM
+status=0
+wait "$pid" || status=$?
+rm -f "$parts"
+exit "$status"
