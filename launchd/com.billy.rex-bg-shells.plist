@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.billy.rex-bg-shells</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/billy/.config/rex/bg-shells.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/billy/Library/Logs/rex-bg-shells.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/billy/Library/Logs/rex-bg-shells.log</string>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+</dict>
+</plist>
