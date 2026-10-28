@@ -8,7 +8,7 @@
 
 local terminal = "com.superlogical.terminal"
 local home = os.getenv("HOME")
-local shipyard = (os.getenv("SHIPYARD") or (home .. "/dev/shipyard")) .. "/bin/shipyard"
+local shipyard = (os.getenv("SHIPYARD") or (home .. "/dev/rig/shipyard")) .. "/bin/shipyard"
 -- A pane an action opens gets the Rex server's environment, which has no
 -- mix or sprite on its PATH, so its command runs in an interactive login
 -- zsh, which sets them up (~/.zshrc).

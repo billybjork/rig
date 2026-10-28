@@ -40,6 +40,13 @@ be copied between repositories lives here.
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
   has a background shell. `bin/rigd status` shows what it sees; the
   decisions are tested (`mix check` in `rigd/`).
+- `shipyard/` is the ship worker (Elixir; its own `README.md`), moved in
+  from github.com/billybjork/shipyard (archived) with its history. Each
+  project's ship command runs `~/dev/rig/shipyard/bin/shipyard`; a worker
+  runs from its own clone of rig's `main`; the LaunchAgent
+  `com.billy.shipyard` polls the queues (`bin/shipyard install`). A ship's
+  end pushes on rig's topic (`shipyard/fnox.toml`, `rig-NTFY_TOPIC`),
+  always, and rigd never pushes for a ship.
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 

@@ -3,8 +3,9 @@
 The ship worker: a small Elixir app that lands a project's queued pull
 requests on `main` one at a time and rolls production behind them, one
 roll at a time. It has no database. GitHub is its queue and its record.
-One worker runs per project, each from its own clone of this repository,
-so projects never wait on one another.
+One worker runs per project, each from its own clone of rig (the
+repository this lives in, `~/dev/rig/shipyard`), so projects never wait on
+one another.
 
 ## A project
 
@@ -80,9 +81,10 @@ in the project.
   one run is sent back.
 - **Billy hears** of every ship's end (`Shipyard.Notify`): live, red,
   landed but not live, or sent back, one message each; a retry is not an
-  end and sends nothing. Each is one push to ntfy.sh on the topic
-  `NTFY_TOPIC` from the project's deploy secrets, and a macOS notification, each
-  naming the project, the PR's number and title, the outcome, what rolled,
+  end and sends nothing. Each is one push to ntfy.sh on rig's one topic,
+  `RIG_NTFY_TOPIC` (`fnox.toml` here; key `rig-NTFY_TOPIC`, which rigd
+  pushes on too, though never for a ship), whether Billy is away or not,
+  and a macOS notification, each naming the project, the PR's number and title, the outcome, what rolled,
   and the branch, never code, logs or the digest. The topic's secrecy is
   the only access control: it stays in Bitwarden, out of logs, and the tests
   never read it. A notification never holds a ship: without the topic the
@@ -125,20 +127,20 @@ in the project.
 ## Where it runs
 
 On the laptop for now. `bin/shipyard start <project>` keeps the worker's
-home at `~/.cache/shipyard/<name>/`: `app` (a clone of this repository)
-and `repo` (a clone of the project), both reset to `origin/main` at each
-start, so a worker runs merged code under the project's merged config;
+home at `~/.cache/shipyard/<name>/`: `app` (a clone of `~/dev/rig`, run
+from `app/shipyard`, reset to rig's `main`) and `repo` (a clone of the
+project, reset to its `origin/main`), both at each start, so a worker runs merged code under the project's merged config;
 `entry`, a linked worktree of `repo` it gates in; `roll`, a second clone
 it rolls from (a fetch into refs the gating checkout shares would race
 the entry's own); `state.json`; and `logs/` (`worker.log`, `ships.tsv`,
-each roll's log). It runs `mix run` under `caffeinate -i` with the
-project's deploy secrets: fnox's deploy tier (`fnox -P deploy`, read with
-the ship worker's own Bitwarden token) for the names in the `fnox.toml` of
-its clone of the project, or, without fnox or that file, the primary
-checkout's `.env` read as `KEY=value` lines (`~/dev/rig`, "Secrets"). It
-stops once the queue has been empty, with no roll running or waiting, for
-a minute. The next ship starts it on fresh
-code.
+each roll's log). It runs `mix run` under `caffeinate -i` with rig's push
+topic and the project's deploy secrets: fnox's deploy tier (`fnox -P
+deploy`, read with the ship worker's own Bitwarden token) for the names in
+this directory's `fnox.toml` and then the `fnox.toml` of its clone of the
+project, or, without fnox or that file, the primary checkout's `.env` read
+as `KEY=value` lines (`~/dev/rig`, "Secrets"). It stops once the queue has
+been empty, with no roll running or waiting, for a minute. The next ship
+starts it on fresh code.
 
 Where a Rex server runs, the worker runs in a Rex tab: the session
 `Shipyard`, a tab named for the project, out of focus, showing its log
@@ -150,10 +152,12 @@ agent's command does not (a harness kills its process group when the
 command ends). Without Rex (launchd's poll before login, or
 `SHIPYARD_REX=0`) the worker runs detached in its own session instead.
 
-The launchd job `launchd/com.billy.shipyard.plist` runs `bin/shipyard
-poll` every 15 minutes, which starts a worker for each project listed in
+The launchd job `com.billy.shipyard` (rig's `launchd/com.billy.shipyard.plist`,
+installed and reloaded by `bin/shipyard install`) runs `bin/shipyard poll`
+every 15 minutes, which starts a worker for each project listed in
 `~/.config/shipyard/projects` (one checkout path per line) that has a PR
 labeled, so a PR a cloud session labeled lands while the laptop is awake.
 
 A change to shipyard takes effect at each worker's next start. Gate it
-with `bin/shipyard check` (compile, format, tests) and push it to `main`.
+with `bin/shipyard check` (compile, format, tests) and commit it to rig's
+`main`.

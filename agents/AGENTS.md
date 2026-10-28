@@ -53,7 +53,7 @@ and the agent's job: Billy never creates, names, or cleans up worktrees.
 ## Shipping
 
 Every project that ships does it through its `ship` skill and the ship
-worker (`~/dev/rig/shipyard`, for now `~/dev/shipyard`). Never weaken a
+worker (`~/dev/rig/shipyard`). Never weaken a
 check, a test, or the gate to pass; a gate change ships on its own. Wait on a
 ship with the project's watch command, which waits in a background terminal,
 not in your own command.

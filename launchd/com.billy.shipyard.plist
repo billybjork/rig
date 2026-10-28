@@ -6,10 +6,10 @@
   cloud session labeled `ship` lands without a laptop ship. Fires every 15
   minutes; `bin/shipyard poll` exits quietly when a worker runs or no PR
   carries the label. Install (and reinstall after a change: bootout, then
-  bootstrap):
+  bootstrap, which `~/dev/rig/shipyard/bin/shipyard install` does, waiting
+  for the old job to unload between them):
 
-    cp launchd/com.billy.shipyard.plist ~/Library/LaunchAgents/
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.billy.shipyard.plist
+    ~/dev/rig/shipyard/bin/shipyard install
 
   launchd starts it with a bare PATH, so the plist names the directories
   the workers and their projects' gates and rolls call into (asdf shims for
@@ -26,7 +26,7 @@
     <string>com.billy.shipyard</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/billy/dev/shipyard/bin/shipyard</string>
+        <string>/Users/billy/dev/rig/shipyard/bin/shipyard</string>
         <string>poll</string>
     </array>
     <key>EnvironmentVariables</key>

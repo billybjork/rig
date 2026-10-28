@@ -5,10 +5,11 @@ defmodule Shipyard.Notify do
   number and title, the outcome, what rolled, and the branch, never code,
   logs or the digest; those stay on the PR and in `bin/shipyard list`.
 
-  The topic (`NTFY_TOPIC`, from the project's deploy secrets on the laptop) is the push's only access
-  control, so it never reaches a log or an inspected struct. A notification
-  never holds a ship: without a topic there is no push, and a push or
-  notification that fails is one warning in the worker's log.
+  The topic (`RIG_NTFY_TOPIC`, rig's one topic, which rigd pushes on too)
+  is the push's only access control, so it never reaches a log or an
+  inspected struct. A notification never holds a ship: without a topic
+  there is no push, and a push or notification that fails is one warning
+  in the worker's log.
   """
 
   require Logger

@@ -1,0 +1,7 @@
+# The worker's own secret: rig's push topic, the one rigd pushes on, under a
+# name no project's deploy secrets use (bin/shipyard run_worker reads the
+# project's after this). The worker runs unattended, so it reads the deploy
+# tier (`fnox -P deploy exec --no-defaults`); values never live here.
+
+[profiles.deploy.secrets]
+RIG_NTFY_TOPIC = { provider = "deploy", value = "rig-NTFY_TOPIC" }

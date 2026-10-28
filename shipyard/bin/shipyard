@@ -9,16 +9,17 @@
 #   bin/shipyard list <project> [--summary [since]]
 #   bin/shipyard wait <project> <pr>             exit 0 only when the ship is live
 #   bin/shipyard watch <project> <pr> [-- cmd]   wait (or cmd) in a Rex background terminal; prints its block
-#   bin/shipyard check                           this repository's own gate
+#   bin/shipyard check                           shipyard's own gate
+#   bin/shipyard install                         (re)install the poll's LaunchAgent
 #
-# `start` returns at once. The worker runs from its own clone of this
-# repository, ~/.cache/shipyard/<name>/app, and its own clone of the project,
-# .../repo, both reset to origin/main at every start, so it runs merged code
-# under the project's merged config. It gates each entry in a linked
+# `start` returns at once. The worker runs from its own clone of rig (the
+# repository this is in), ~/.cache/shipyard/<name>/app, reset to rig's main,
+# and its own clone of the project, .../repo, reset to origin/main, both at
+# every start, so it runs merged code under the project's merged config. It gates each entry in a linked
 # worktree of the project clone, .../entry, and rolls from a second clone,
 # .../roll, which its first roll makes. None is a worktree of a working
-# checkout. It runs with the project's deploy secrets (the roll's settings
-# and NTFY_TOPIC, from fnox's deploy tier; run_worker), runs in its own session (so it outlives the command that
+# checkout. It runs with the project's deploy secrets (the roll's settings,
+# from fnox's deploy tier) and rig's push topic (run_worker), runs in its own session (so it outlives the command that
 # started it), holds `caffeinate -i` where there is one, logs to
 # .../logs/worker.log, and exits once the queue is empty and no roll runs or
 # waits. `--if-queued` starts it only when a PR carries the `ship` label.
@@ -39,9 +40,11 @@
 set -euo pipefail
 
 self=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# rig's primary checkout, whatever checkout of rig this is.
+rig=$(cd "$(git -C "$self" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
 say() { echo "shipyard: $*"; }
 die() { echo "shipyard: $*" >&2; exit 64; }
-usage() { sed -n '5,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 64; }
+usage() { sed -n '5,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 64; }
 
 # The project checkout's toplevel and its config's fields.
 project() {
@@ -97,9 +100,8 @@ start() {
   fi
 
   local repo=$home/repo entry=$home/entry app=$home/app
-  local origin self_origin
+  local origin
   origin=$(git -C "$top" remote get-url origin)
-  self_origin=$(git -C "$self" remote get-url origin)
 
   [ -d "$repo/.git" ] || git clone -q "$origin" "$repo"
   git -C "$repo" fetch -q origin
@@ -107,10 +109,13 @@ start() {
   [ -f "$repo/.shipyard.json" ] || die "origin/main of $slug has no .shipyard.json yet"
   [ -d "$entry" ] || git -C "$repo" worktree add -q --detach "$entry" origin/main
 
-  [ -d "$app/.git" ] || git clone -q "$self_origin" "$app"
+  # rig has no remote: its primary checkout's main is merged code. An app
+  # cloned from anywhere else (shipyard's own repository, before it moved
+  # into rig) is cloned again.
+  [ "$(git -C "$app" remote get-url origin 2>/dev/null)" = "$rig" ] || { rm -rf "$app" && git clone -q "$rig" "$app"; }
   git -C "$app" fetch -q origin
   git -C "$app" checkout -q --force --detach origin/main
-  mix_in "$app" compile >>"$home/logs/worker.log" 2>&1 || die "the worker does not compile; see $home/logs/worker.log"
+  mix_in "$app/shipyard" compile >>"$home/logs/worker.log" 2>&1 || die "the worker does not compile; see $home/logs/worker.log"
 
   rm -f "$home/worker.pid"
   if worker_tab; then
@@ -236,18 +241,24 @@ worker_in_tab() {
 
 # The worker itself, in this process (the Rex tab's or the detached one):
 # `mix run` in the worker's own clone, under caffeinate where there is one,
-# with the project's deploy secrets (the roll's settings and NTFY_TOPIC).
-# Those come from fnox's deploy tier, named by the fnox.toml in the worker's
-# clone of the project (~/dev/rig, "Secrets"); without fnox, bws, or that file, from
-# the primary checkout's .env, read as KEY=value lines, never run.
+# with the project's deploy secrets (the roll's settings) and rig's push
+# topic, RIG_NTFY_TOPIC. Both come from fnox's deploy tier: the project's
+# named by the fnox.toml in the worker's clone of the project, the topic by
+# shipyard/fnox.toml in its clone of rig (~/dev/rig, "Secrets"); its own
+# name keeps a project's NTFY_TOPIC from shadowing it. Without fnox, bws, or
+# the project's file, the project's come from the primary checkout's .env,
+# read as KEY=value lines, never run.
 run_worker() {
   project "$1"
   local primary
   primary=$(cd "$(git -C "$top" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
-  cd "$home/app"
+  cd "$home/app/shipyard"
   secrets=()
-  if command -v fnox >/dev/null && command -v bws >/dev/null && [ -f "$home/repo/fnox.toml" ]; then
-    secrets=(fnox -c "$home/repo/fnox.toml" -P deploy exec --no-defaults --)
+  if command -v fnox >/dev/null && command -v bws >/dev/null; then
+    secrets=(fnox -c "$home/app/shipyard/fnox.toml" -P deploy exec --no-defaults --)
+  fi
+  if [ ${#secrets[@]} -gt 0 ] && [ -f "$home/repo/fnox.toml" ]; then
+    secrets+=(fnox -c "$home/repo/fnox.toml" -P deploy exec --no-defaults --)
   elif [ -f "$primary/.env" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] && export "${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
@@ -289,6 +300,16 @@ main() {
       ;;
     check)
       mix_in "$self" check
+      ;;
+    install)
+      label=com.billy.shipyard domain=gui/$(id -u)
+      plist=$HOME/Library/LaunchAgents/$label.plist
+      launchctl bootout "$domain/$label" 2>/dev/null || true
+      # bootout returns before the job is gone; bootstrapping it sooner fails.
+      for _ in $(seq 50); do launchctl print "$domain/$label" >/dev/null 2>&1 || break; sleep 0.2; done
+      cp "$rig/launchd/$label.plist" "$plist"
+      launchctl bootstrap "$domain" "$plist"
+      launchctl print "$domain/$label" >/dev/null && say "the poll is loaded (log: ~/Library/Logs/shipyard.log)"
       ;;
     watch)
       shift
