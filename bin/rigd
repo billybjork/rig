@@ -21,6 +21,8 @@ main() {
     install)
       (cd "$rig/rigd" && MIX_ENV=prod mix release --overwrite --quiet)
       launchctl bootout "$domain/$label" 2>/dev/null || true
+      # bootout returns before the job is gone; bootstrapping it sooner fails.
+      for _ in $(seq 50); do launchctl print "$domain/$label" >/dev/null 2>&1 || break; sleep 0.2; done
       cp "$rig/launchd/$label.plist" "$plist"
       launchctl bootstrap "$domain" "$plist"
       echo "rigd: running (log: ~/Library/Logs/rigd.log)"
