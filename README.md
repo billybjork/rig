@@ -110,19 +110,21 @@ in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
 every `.env` deleted, `.env.example` kept; shipyard's worker reads the deploy
 tier; agents' deny rules); shells in background terminals (`bin/bg`,
 shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
-launchd with Activity, Presence, Awake, Notify, and RexBadges; it replaced
-`com.billy.rex-bg-shells`. Step 3's first slice: shipyard lives in
-`shipyard/` with its history (github.com/billybjork/shipyard archived);
-soco #373 and heaters #535 point their ship commands at it, and drop their
-own `NTFY_TOPIC`; both shipped live through the moved worker. The poll's
-LaunchAgent runs `~/dev/rig/shipyard/bin/shipyard` (`bin/shipyard
-install`). `~/dev/shipyard` is a symlink to `rig/shipyard` for worktrees
-cut before #373 and #535; remove it once none remain.
+launchd with Activity, Presence, Awake, Notify, and RexBadges. Step 3's
+first slice: shipyard lives in `shipyard/` with its history; soco #373 and
+heaters #535 point their ship commands at it. `~/dev/shipyard` is a symlink
+to `rig/shipyard` for worktrees cut before #373 and #535; remove it once
+none remain.
 
-The sudoers rule is installed (lid-closed keep-awake works) and
-`rig-NTFY_TOPIC` is set (Notify pushes; tested). Billy's manual
-`caffeinate -dimsu` and Amphetamine are no longer needed.
+Step 3's slice 2, in progress: `gate/` (its README) is on main, the shared
+runner with parts detached on their Sprites (21 tests, `gate/bin/gate
+self-check`); the worker exports `RIG`, its clone of rig. The poll reads
+the queue through GraphQL (soco #302's stale match is gone). Branches
+`claude/rig-gate` in soco and heaters (worktrees `.worktrees/claude-rig-gate`)
+move each project onto it; heaters' live trial was green in 426 s; soco's
+was green but static-1, which keeps dying on soco-gate-1 (a host that
+reboots mid-dialyzer with 5 GB free, under the old runner too). Neither
+branch has shipped.
 
-Next: step 3's slice 2, the shared detached-part runner (the Sprite gate's
-open items, `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`), then
-slice 3, then agents on Sprites (step 5).
+Next: ship soco's and heaters' branches (each alone, through its ship
+skill), then slice 3, then agents on Sprites (step 5).
