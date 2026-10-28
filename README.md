@@ -117,15 +117,14 @@ heaters #535 point their ship commands at it. `~/dev/shipyard` is a symlink
 to `rig/shipyard` for worktrees cut before #373 and #535; remove it once
 none remain.
 
-Step 3's slice 2, in progress: `gate/` (its README) is on main, the shared
-runner with parts detached on their Sprites (21 tests, `gate/bin/gate
-self-check`); the worker exports `RIG`, its clone of rig. The poll reads
-the queue through GraphQL (soco #302's stale match is gone). Branches
-`claude/rig-gate` in soco and heaters (worktrees `.worktrees/claude-rig-gate`)
-move each project onto it; heaters' live trial was green in 426 s; soco's
-was green but static-1, which keeps dying on soco-gate-1 (a host that
-reboots mid-dialyzer with 5 GB free, under the old runner too). Neither
-branch has shipped.
+Step 3's slice 2, done: `gate/` (its README) is the shared runner, parts
+detached on their Sprites (21 tests, `gate/bin/gate self-check`); the
+worker exports `RIG`, its clone of rig, and reads the queue through
+GraphQL. soco (#376) and heaters (#544) gate on it. soco-gate-1, which
+rebooted mid-dialyzer all day, was rebuilt and gates green again; soco
+#379 dropped a stale npm acceptance that reddened every gate.
 
-Next: ship soco's and heaters' branches (each alone, through its ship
-skill), then slice 3, then agents on Sprites (step 5).
+Next: the projects' `provision.sh` headers still describe the old upload
+(edit them now that both use the new runner: it re-stamps each pool once);
+stale `gate_weights.exs` entries for soco's deleted runner tests (`gate
+times` after a green gate); then slice 3, then agents on Sprites (step 5).
