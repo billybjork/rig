@@ -24,10 +24,11 @@ be copied between repositories lives here.
 
 Still to come, in this order (agreed with Billy, 2026-10-28):
 
-1. The rest of the shared skills (triage, audit-guidance, test-audit) into
-   `agents/skills/`. `ship` and `task` stay in each repository, because
-   Claude Code on the web sees only what a repository commits; their shared
-   parts move here.
+1. Skills that are the same everywhere live here (`handoff`). Skills shaped
+   by a project (`ship`, `task`, `triage`, `audit-guidance`, `test-audit`)
+   stay in its repository: they wrap its notes, gate, and test conventions,
+   and Claude Code on the web sees only what a repository commits. What
+   their copies share (waiting on a ship in a pane, the handoff) moves here.
 2. `rigd/`: one supervised Elixir daemon (a KeepAlive LaunchAgent).
    - `Activity`: the one registry of what is running (agents working, per
      Rex program status; background shells; ship workers; Sprite runs).
