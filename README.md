@@ -9,8 +9,7 @@ be copied between repositories lives here.
 ## Layout
 
 - `rex/` is Rex's config; `~/.config/rex` links here (`rex config reload`
-  after a change). `bg-shells.lua` marks tabs with a background shell (⚙)
-  until rigd takes it over.
+  after a change).
 - `agents/AGENTS.md` is the guide every project shares, linked as
   `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
 - `secrets/fnox.toml` is fnox's global config (`~/.config/fnox/config.toml`
@@ -26,6 +25,21 @@ be copied between repositories lives here.
   on Billy's PATH (`~/.zshrc`).
 - `agents/skills/` holds the skills every project shares, each linked into
   `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
+- `rigd/` is the daemon (Elixir, a KeepAlive LaunchAgent `com.billy.rigd`;
+  `bin/rigd install | status | log | restart | sudoers`). Every few seconds
+  `Activity` rebuilds what runs (agents working, per the status each reports
+  to Rex, read by `priv/probe.lua`; agents' background shells; running
+  background terminals; ship workers). `Awake` holds `caffeinate -ims` while
+  anything runs and a minute after, and with the sudoers rule
+  (`rigd/sudoers`) also `pmset disablesleep` so a closed lid doesn't sleep
+  the Mac: only on AC or at 30% battery and up, without thermal pressure,
+  for 4 h of lid-closed time at most, cleared when work ends and when rigd
+  stops or starts. `Presence` reads lid, lock, and idle time; `Notify` sends
+  one ntfy push per agent that finishes (or waits on Billy) while he is
+  away, on `NTFY_TOPIC` from `rigd/fnox.toml` (deploy tier, key
+  `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
+  has a background shell. `bin/rigd status` shows what it sees; the
+  decisions are tested (`mix check` in `rigd/`).
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 
@@ -36,7 +50,8 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
    stay in its repository: they wrap its notes, gate, and test conventions,
    and Claude Code on the web sees only what a repository commits. What
    their copies share (waiting on a ship in a pane, the handoff) moves here.
-2. `rigd/`: one supervised Elixir daemon (a KeepAlive LaunchAgent).
+2. `rigd/`: one supervised Elixir daemon (a KeepAlive LaunchAgent). Done
+   but `Fleet`, which comes with step 3.
    - `Activity`: the one registry of what is running (agents working, per
      Rex program status; background shells; ship workers; Sprite runs).
    - `Presence`: lid, idle time, screen lock.
@@ -78,5 +93,15 @@ Done: this repository; the shared guide and `handoff` skill; Rex config moved
 in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
 every `.env` deleted, `.env.example` kept; shipyard's worker reads the deploy
 tier; agents' deny rules); shells in background terminals (`bin/bg`,
-shipyard's watch, the palette's Show and Hide). Next: rigd (step 2), then the
-fleet with shipyard moved in (step 3), then agents on Sprites (step 5).
+shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
+launchd with Activity, Presence, Awake, Notify, and RexBadges; it replaced
+`com.billy.rex-bg-shells`.
+
+Waiting on Billy: the sudoers rule (`bin/rigd sudoers`, asks for his
+password) before lid-closed keep-awake works, and `rig-NTFY_TOPIC` in
+Bitwarden's deploy project before Notify pushes (until then it logs each
+push it would send). Once the rule is in, Amphetamine and the manual
+`caffeinate -dimsu` can go.
+
+Next: the fleet with shipyard moved in (step 3; rigd's `Fleet` and ship
+pushes through Notify come with it), then agents on Sprites (step 5).

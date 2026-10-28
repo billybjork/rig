@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  rigd (~/dev/rig/rigd): Activity, Presence, Awake, Notify, and the ⚙ tab
+  marks. Kept alive by launchd; `~/dev/rig/bin/rigd install` builds the
+  release and (re)loads this. Log: ~/Library/Logs/rigd.log.
+
+  launchd starts it with a bare PATH, so the plist names where rex (inside
+  Rex Server.app), fnox and bws (Homebrew) live; ioreg and pmset are in the
+  system directories.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.billy.rigd</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/billy/dev/rig/rigd/_build/prod/rel/rigd/bin/rigd</string>
+        <string>start</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/billy/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/billy/Library/Logs/rigd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/billy/Library/Logs/rigd.log</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+</dict>
+</plist>

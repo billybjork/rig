@@ -32,7 +32,7 @@ Billy works in Rex and wants his tabs uncluttered (Billy, 2026-10-28).
 - **No strays.** Close every background terminal, pane, and tab you opened
   once its work is read. Never switch Billy's focused session or view, and
   never kill or restart Rex processes, without asking.
-- A tab label starting with `⚙` is rig's watcher marking an idle agent with a
+- A tab label starting with `⚙` is rigd marking an idle agent with a
   background shell, not Billy's naming.
 - Without Rex (`REX_SESSION` unset), run the command in the harness's
   background instead.

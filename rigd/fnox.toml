@@ -1,0 +1,6 @@
+# rigd's secrets: each name and its key in Bitwarden Secrets Manager. rigd
+# runs unattended, so it reads them from the deploy tier
+# (`fnox -P deploy exec --no-defaults`); values never live here.
+
+[profiles.deploy.secrets]
+NTFY_TOPIC = { provider = "deploy", value = "rig-NTFY_TOPIC" }

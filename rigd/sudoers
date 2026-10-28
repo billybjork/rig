@@ -1,0 +1,5 @@
+# rigd's Awake (~/dev/rig/rigd) keeps the Mac awake with its lid closed while
+# work runs, by setting pmset's disablesleep; it needs exactly these two
+# commands without a password. Installed as /etc/sudoers.d/rigd by
+# `~/dev/rig/bin/rigd sudoers`.
+billy ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset -a disablesleep 0
