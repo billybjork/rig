@@ -13,6 +13,10 @@ be copied between repositories lives here.
   until rigd takes it over.
 - `agents/AGENTS.md` is the guide every project shares, linked as
   `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
+- `secrets/fnox.toml` is fnox's global config (`~/.config/fnox/config.toml`
+  links here): the Bitwarden Secrets Manager projects and which machine
+  account's Keychain token reads each. `secrets/tools/` holds the one-off
+  migration from `.env` (names and counts only, never values).
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 
