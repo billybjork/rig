@@ -17,15 +17,17 @@ be copied between repositories lives here.
   links here): the Bitwarden Secrets Manager projects and which machine
   account's Keychain token reads each. `secrets/tools/` holds the one-off
   migration from `.env` (names and counts only, never values).
+- `agents/skills/` holds the skills every project shares, each linked into
+  `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 
 Still to come, in this order (agreed with Billy, 2026-10-28):
 
-1. `agents/skills/`: the shared skills (handoff, ship, task, triage,
-   audit-guidance, test-audit), linked into `~/.claude/skills` and
-   `~/.agents/skills`. A skill reads a project's specifics from its config
-   and its own `AGENTS.md`.
+1. The rest of the shared skills (triage, audit-guidance, test-audit) into
+   `agents/skills/`. `ship` and `task` stay in each repository, because
+   Claude Code on the web sees only what a repository commits; their shared
+   parts move here.
 2. `rigd/`: one supervised Elixir daemon (a KeepAlive LaunchAgent).
    - `Activity`: the one registry of what is running (agents working, per
      Rex program status; background shells; ship workers; Sprite runs).

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Session-to-session handoff in Rex: the running agent opens its successor in
+# a pane beside its own, with a prompt file as the successor's first message;
+# the successor closes the predecessor's pane once it has gone idle. The
+# `handoff` skill (~/dev/rig/agents/skills/handoff) owns when and how; this
+# script is its mechanics. Any project in ~/dev.
+#
+#   handoff open PROMPT [DIR] [--asked]
+#       PROMPT lives under a checkout's .local/handoffs/ (gitignored). The
+#       successor runs the same harness (Claude or Codex) with the same
+#       permission bypass as this session, in DIR (default: this checkout's
+#       top level), as handoff number RIG_HANDOFF_GEN + 1. A footer naming
+#       this pane is appended to PROMPT. Past three automatic handoffs it
+#       refuses unless --asked (Billy asked for this one). Prints the new pane
+#       once the successor is working.
+#   handoff close BLOCK
+#       Waits (up to ten minutes) until the agent in BLOCK is idle, closes the
+#       pane, and moves this checkout's worktree lock, when it has one, to
+#       this session.
+set -euo pipefail
+
+fail() { echo "handoff: $*" >&2; exit 1; }
+max_auto=3
+
+# The agent process this script runs under: the nearest claude or codex
+# ancestor, as "pid args".
+agent() {
+  local pid=$PPID comm
+  while [ "$pid" -gt 1 ]; do
+    comm=$(ps -o comm= -p "$pid" | xargs basename 2>/dev/null || true)
+    case "$comm" in
+      claude | codex) echo "$pid $(ps -o args= -p "$pid")"; return ;;
+    esac
+    pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+  done
+}
+
+# Mid-turn, Claude shows a spinner line above its input box ("✶ Spinning…
+# (2m 51s · ↓ 15.6k tokens)") and Codex an "esc to interrupt" status.
+working() { grep -qiE '^[^[:space:][:alnum:]]+ [[:alpha:]]+… \(|esc to interrupt'; }
+
+busy() { # BLOCK -> 0 while its agent is mid-turn
+  rex capture -b "$1" --trim 2>/dev/null | tail -n 15 | working
+}
+
+exists() { rex block inspect "$1" >/dev/null 2>&1; }
+
+open() {
+  local prompt="" dir="" asked=""
+  for arg in "$@"; do
+    case "$arg" in
+      --asked) asked=1 ;;
+      *) if [ -z "$prompt" ]; then prompt=$arg; else dir=$arg; fi ;;
+    esac
+  done
+  [ -n "$prompt" ] || fail "usage: handoff open PROMPT [DIR] [--asked]"
+  command -v rex >/dev/null || fail "rex is not installed; give Billy the successor's command instead"
+  [ -n "${REX_SESSION:-}" ] && [ -n "${REX_BLOCK:-}" ] || fail "not running in a Rex pane (REX_SESSION, REX_BLOCK unset)"
+
+  prompt=$(cd "$(dirname "$prompt")" && pwd)/$(basename "$prompt")
+  case "$prompt" in */.local/handoffs/*) ;; *) fail "$prompt is not under a checkout's .local/handoffs/" ;; esac
+  [ -s "$prompt" ] || fail "$prompt is missing or empty"
+  dir=${dir:-$(git rev-parse --show-toplevel)}
+  [ -d "$dir" ] || fail "$dir is not a directory"
+
+  local gen=$(( ${RIG_HANDOFF_GEN:-${HEATERS_HANDOFF_GEN:-0}} + 1 ))
+  [ "$gen" -le "$max_auto" ] || [ -n "$asked" ] ||
+    fail "this would be handoff $gen; past $max_auto automatic handoffs Billy decides (rerun with --asked once he has)"
+
+  local found pid args harness cmd
+  found=$(agent) || true
+  [ -n "$found" ] || fail "no claude or codex process above this shell"
+  pid=${found%% *}; args=${found#* }
+  harness=$(ps -o comm= -p "$pid" | xargs basename)
+  case "$harness" in
+    claude)
+      cmd=(claude)
+      case " $args " in *" --dangerously-skip-permissions "*) cmd+=(--dangerously-skip-permissions) ;; esac
+      ;;
+    codex)
+      cmd=(codex -C "$dir")
+      case " $args " in *" --dangerously-bypass-approvals-and-sandbox "*) cmd+=(--dangerously-bypass-approvals-and-sandbox) ;; esac
+      ;;
+  esac
+
+  local self
+  self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  cat >>"$prompt" <<EOF
+
+---
+Handoff $gen. The session before you runs in Rex pane $REX_BLOCK. Once you have read this prompt, run \`$self close $REX_BLOCK\` in the background: it waits for that session to go idle, then closes its pane.
+EOF
+
+  local created block
+  created=$(rex split -s "$REX_SESSION" -b "$REX_BLOCK" --split=right -c "$dir" \
+    --label "handoff-$gen" --focus=false --json -- \
+    env RIG_HANDOFF_GEN="$gen" HANDOFF_PROMPT="$prompt" sh -c 'exec "$@" "$(cat "$HANDOFF_PROMPT")"' sh "${cmd[@]}" \
+    2>&1) || fail "rex split failed: $created"
+  block=$(printf '%s' "$created" | sed -n 's/.*"block_ids": *\[ *"\([^"]*\)".*/\1/p' | head -1)
+  [ -n "$block" ] || block=$(printf '%s' "$created" | tr -d '\n ' | sed -n 's/.*"block_ids":\["\([^"]*\)".*/\1/p')
+  [ -n "$block" ] || fail "rex split gave no pane: $created"
+
+  local screen
+  for _ in $(seq 1 45); do
+    sleep 2
+    screen=$(rex capture -b "$block" --trim 2>/dev/null || true)
+    if printf '%s\n' "$screen" | tail -n 15 | working; then
+      echo "handoff: successor working in pane $block ($harness, handoff $gen, in $dir)"
+      return
+    fi
+    if printf '%s' "$screen" | grep -qiE 'do you trust|trust this folder|trust the files'; then
+      fail "successor in pane $block waits on a trust prompt; tell Billy to answer it"
+    fi
+  done
+  printf '%s\n' "$screen" | tail -n 15 >&2
+  fail "successor in pane $block did not start working within 90 s"
+}
+
+close() {
+  local block=${1:-}
+  [ -n "$block" ] || fail "usage: handoff close BLOCK"
+  [ "$block" != "${REX_BLOCK:-}" ] || fail "$block is this session's own pane"
+
+  local idle=0
+  for _ in $(seq 1 120); do
+    exists "$block" || { echo "handoff: pane $block is already closed"; break; }
+    if busy "$block"; then idle=0; else idle=$((idle + 1)); fi
+    if [ "$idle" -ge 2 ]; then
+      rex block close "$block" >/dev/null
+      echo "handoff: closed pane $block"
+      break
+    fi
+    sleep 5
+  done
+  ! exists "$block" || fail "pane $block stayed busy for ten minutes; left open"
+
+  local top found
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  if git worktree list --porcelain | awk -v t="$top" '$1 == "worktree" { w = $2 } $1 == "locked" && w == t { f = 1 } END { exit !f }'; then
+    found=$(agent) || true
+    git worktree unlock "$top"
+    git worktree lock --reason "handoff session (pid ${found%% *})" "$top"
+    echo "handoff: worktree lock moved to this session"
+  fi
+}
+
+case "${1:-}" in
+  open) shift; open "$@" ;;
+  close) shift; close "$@" ;;
+  *) fail "usage: handoff open PROMPT [DIR] [--asked] | close BLOCK" ;;
+esac
