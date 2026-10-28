@@ -17,6 +17,9 @@ be copied between repositories lives here.
   links here): the Bitwarden Secrets Manager projects and which machine
   account's Keychain token reads each. `secrets/tools/` holds the one-off
   migration from `.env` (names and counts only, never values).
+  `~/.claude/settings.json` denies agents `fnox get/export/env/edit`,
+  `bws secret`, Keychain token lookups, and reading `.env`; a script an
+  agent runs (a `just` recipe, `bin/shipyard`) is not affected.
 - `agents/skills/` holds the skills every project shares, each linked into
   `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
