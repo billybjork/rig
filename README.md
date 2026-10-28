@@ -20,6 +20,10 @@ be copied between repositories lives here.
   `~/.claude/settings.json` denies agents `fnox get/export/env/edit`,
   `bws secret`, Keychain token lookups, and reading `.env`; a script an
   agent runs (a `just` recipe, `bin/shipyard`) is not affected.
+- `bin/bg` runs a command in a Rex background terminal (a block no tab
+  shows); `rex/background.lua` adds the palette's "Background: Show" (a
+  picker when there are several) and "Background: Hide This Pane". `bin/` is
+  on Billy's PATH (`~/.zshrc`).
 - `agents/skills/` holds the skills every project shares, each linked into
   `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in

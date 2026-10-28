@@ -6,3 +6,4 @@ local dir = os.getenv("HOME") .. "/.config/rex/"
 dofile(dir .. "projects.lua")
 dofile(dir .. "nts.lua")
 dofile(dir .. "shipyard.lua")
+dofile(dir .. "background.lua")

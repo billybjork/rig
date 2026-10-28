@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Background terminals in Rex: a command runs in a terminal block that no tab
+# shows (a detached block in the caller's session), so it is out of Billy's
+# way but still a real terminal an agent can wait on, read, and close, and
+# Billy can bring into view from the palette ("Background: Show").
+#
+#   bg run [--label TEXT] [--cwd DIR] -- COMMAND...   start it; prints the block
+#   bg ls                                             this session's background terminals
+#   bg show BLOCK                                     place it below the calling pane
+#   bg hide [BLOCK]                                   take a pane (default: this one) out of its tab
+#
+# Then, with the block bg run printed:
+#   rex wait -s "$REX_SESSION" BLOCK --for 9m    its exit status; exit 1 with "timed out" on a timeout
+#   rex capture -s "$REX_SESSION" -b BLOCK --trim | tail -n 80
+#   rex block close -s "$REX_SESSION" BLOCK
+#
+# COMMAND runs in an interactive login zsh, so it has the PATH a terminal
+# has. The terminal stays open after COMMAND ends, until it is closed. Outside
+# Rex (REX_SESSION unset), bg run fails; run COMMAND in the background instead.
+set -euo pipefail
+
+fail() { echo "bg: $*" >&2; exit 64; }
+[ -n "${REX_SESSION:-}" ] || fail "not in Rex (REX_SESSION unset)"
+command -v jq >/dev/null || fail "needs jq"
+
+case "${1:-}" in
+  run)
+    shift
+    label=bg cwd=$PWD
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --label) label=$2; shift 2 ;;
+        --cwd) cwd=$2; shift 2 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    [ $# -gt 0 ] || fail "usage: bg run [--label TEXT] [--cwd DIR] -- COMMAND..."
+    # The command reaches jq as NUL-separated input, so its own flags are
+    # never read as jq's.
+    args=$(printf '%s\0' "$@" | jq -Rs --arg label "$label" --arg cwd "$cwd" \
+      '{flavor: "com.superlogical.terminal.shell", label: $label,
+        options: {cwd: $cwd, command: (["/bin/zsh", "-lic", "exec \"$@\"", "zsh"] + (split("\u0000") | .[:-1])),
+                  exit: {on_completion: false}}}')
+    rex api call -s "$REX_SESSION" session.new_block "$args" | jq -er .block_id
+    ;;
+  ls)
+    rex api call -s "$REX_SESSION" session.list_blocks '{}' |
+      jq -r '.blocks[]? | select(.placement == "detached") | "\(.block_id)\t\(.label // "")"'
+    ;;
+  show)
+    [ -n "${2:-}" ] || fail "usage: bg show BLOCK"
+    [ -n "${REX_BLOCK:-}" ] || fail "no calling pane (REX_BLOCK unset)"
+    rex api call -s "$REX_SESSION" session.move_block \
+      "$(jq -n --arg b "$2" --arg a "$REX_BLOCK" '{block_id: $b, anchor_block_id: $a, direction: "vertical", side: "after", ratio: 0.65}')" >/dev/null
+    ;;
+  pick)
+    # The palette's "Background: Show" with several to choose from: a numbered
+    # list, each with its last line; the choice goes below ANCHOR.
+    anchor=${2:-${REX_BLOCK:-}}
+    [ -n "$anchor" ] || fail "usage: bg pick ANCHOR"
+    ids=() names=()
+    while IFS=$'\t' read -r id label; do
+      last=$(rex capture -s "$REX_SESSION" -b "$id" --trim 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-70)
+      ids+=("$id") names+=("$label — ${last:-(no output)}")
+    done < <("$0" ls)
+    [ ${#ids[@]} -gt 0 ] || { echo "No background terminals in this session."; sleep 2; exit 0; }
+    PS3="Show which (Enter cancels)? "
+    select _ in "${names[@]}"; do
+      [ -n "${REPLY:-}" ] && [ "$REPLY" -ge 1 ] 2>/dev/null && [ "$REPLY" -le ${#ids[@]} ] || exit 0
+      REX_BLOCK=$anchor "$0" show "${ids[$((REPLY - 1))]}"
+      exit 0
+    done
+    ;;
+  hide)
+    block=${2:-${REX_BLOCK:-}}
+    [ -n "$block" ] || fail "usage: bg hide [BLOCK]"
+    rex api call -s "$REX_SESSION" session.detach_block "$(jq -n --arg b "$block" '{block_id: $b}')" >/dev/null
+    ;;
+  *)
+    sed -n '7,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+    exit 64
+    ;;
+esac

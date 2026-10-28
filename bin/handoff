@@ -144,8 +144,14 @@ close() {
   fi
 }
 
-case "${1:-}" in
-  open) shift; open "$@" ;;
-  close) shift; close "$@" ;;
-  *) fail "usage: handoff open PROMPT [DIR] [--asked] | close BLOCK" ;;
-esac
+# Inside main, called on the last line, so a close that is waiting keeps
+# running the script it started with when this file changes.
+main() {
+  case "${1:-}" in
+    open) shift; open "$@" ;;
+    close) shift; close "$@" ;;
+    *) fail "usage: handoff open PROMPT [DIR] [--asked] | close BLOCK" ;;
+  esac
+}
+
+main "$@"; exit
