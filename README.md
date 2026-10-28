@@ -79,6 +79,15 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
    nightly, parts assigned to any idle Sprite, toolchain bumps rolled across
    the pool instead of failing gates. The gate runner moves here from
    soco's `tooling/` and heaters' `scripts/`, and shipyard moves into rig.
+   In slices (agreed with Billy, 2026-10-28):
+   1. shipyard moves in (done): history kept, its GitHub repository
+      archived, workers run from a clone of rig, ship pushes on rig's topic.
+   2. A shared detached-part runner here, on today's per-project pools:
+      parts run detached on the Sprite writing log and exit files, real
+      timeouts enforced from outside the `sprite` CLI, the dialyzer PLT
+      built when `mix.lock` changes rather than inside a part.
+   3. The one mise image and golden checkpoint, the shared pool, and rigd's
+      `Fleet`.
 4. Secrets: Bitwarden (free) for personal passwords and Bitwarden Secrets
    Manager (free: 3 projects, 3 machine accounts) for dev, read through
    fnox. Projects `dev`, `deploy` and `fleet`, each read by its own machine
@@ -102,11 +111,18 @@ every `.env` deleted, `.env.example` kept; shipyard's worker reads the deploy
 tier; agents' deny rules); shells in background terminals (`bin/bg`,
 shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
 launchd with Activity, Presence, Awake, Notify, and RexBadges; it replaced
-`com.billy.rex-bg-shells`.
+`com.billy.rex-bg-shells`. Step 3's first slice: shipyard lives in
+`shipyard/` with its history (github.com/billybjork/shipyard archived);
+soco #373 and heaters #535 point their ship commands at it, and drop their
+own `NTFY_TOPIC`; both shipped live through the moved worker. The poll's
+LaunchAgent runs `~/dev/rig/shipyard/bin/shipyard` (`bin/shipyard
+install`). `~/dev/shipyard` is a symlink to `rig/shipyard` for worktrees
+cut before #373 and #535; remove it once none remain.
 
 The sudoers rule is installed (lid-closed keep-awake works) and
 `rig-NTFY_TOPIC` is set (Notify pushes; tested). Billy's manual
 `caffeinate -dimsu` and Amphetamine are no longer needed.
 
-Next: the fleet with shipyard moved in (step 3; rigd's `Fleet` and ship
-pushes through Notify come with it), then agents on Sprites (step 5).
+Next: step 3's slice 2, the shared detached-part runner (the Sprite gate's
+open items, `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`), then
+slice 3, then agents on Sprites (step 5).
