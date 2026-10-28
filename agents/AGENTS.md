@@ -66,8 +66,14 @@ what only it holds: background shells, servers, watches, panes.
 - Never print, log, or write a secret's value, in a file, a commit, a
   transcript, or a permission rule. Name it; if you must tell two apart, the
   last 4 characters.
-- Do not read `.env*` files or dump the environment. Run commands that need
-  secrets the way the project says (its scripts load them for you).
+- Values live in Bitwarden Secrets Manager. A project's `fnox.toml` names its
+  secrets; run a command that needs them as `fnox exec -- <command>` (prod-
+  facing and unattended ones: `fnox -P deploy exec --no-defaults -- …`).
+  Never run `fnox get`, `fnox export`, `bws secret`, or a Keychain lookup of a
+  token, and do not read `.env*` files or dump the environment. A project
+  whose scripts already wrap fnox needs nothing extra.
+- Adding or rotating a secret: Billy sets the value in Bitwarden (key
+  `<repo>-<NAME>`), you add its name to `fnox.toml`, then `fnox daemon clear`.
 - Security incidents and cross-project chores are recorded in `~/dev/ops`.
 
 ## Judgment
