@@ -11,14 +11,14 @@ be copied between repositories lives here.
 - `rex/` is Rex's config; `~/.config/rex` links here (`rex config reload`
   after a change). `bg-shells.lua` marks tabs with a background shell (⚙)
   until rigd takes it over.
+- `agents/AGENTS.md` is the guide every project shares, linked as
+  `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 
 Still to come, in this order (agreed with Billy, 2026-10-28):
 
-1. `agents/`: one `AGENTS.md` of the rules every project shares (worktrees,
-   shipping, Rex panes, secrets), linked as `~/.claude/CLAUDE.md` and
-   `~/.codex/AGENTS.md`, and the shared skills (handoff, ship, task, triage,
+1. `agents/skills/`: the shared skills (handoff, ship, task, triage,
    audit-guidance, test-audit), linked into `~/.claude/skills` and
    `~/.agents/skills`. A skill reads a project's specifics from its config
    and its own `AGENTS.md`.
@@ -43,9 +43,15 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
    nightly, parts assigned to any idle Sprite, toolchain bumps rolled across
    the pool instead of failing gates. The gate runner moves here from
    soco's `tooling/` and heaters' `scripts/`, and shipyard moves into rig.
-4. Secrets: references committed per repo, values injected at the command
-   (no `.env` copies in worktrees, none in agents' context, prod keys off
-   the laptop by default). Tool still being chosen.
+4. Secrets: Bitwarden (free) for personal passwords and Bitwarden Secrets
+   Manager (free: 3 projects, 3 machine accounts) for dev, read through
+   fnox. Projects `dev`, `deploy` and `fleet`, each read by its own machine
+   account (`laptop`, `shipyard`, `fleet`), so a token reaches only its
+   tier. Each repo commits a `fnox.toml` of names and key references,
+   never values; commands run under `fnox exec`. No `.env` copies in
+   worktrees, no values in agents' context (agents may run `fnox exec`,
+   never `fnox get` or `bws secret`), prod keys only in `deploy`. Render
+   and Railway keep their env vars, pushed from the store on rotation.
 5. Agent sessions on Sprites, then Sprites as Rex hosts.
 
 The audit behind this (Sprite failure modes, duplication, secrets) is in the
