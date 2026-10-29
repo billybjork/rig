@@ -119,6 +119,14 @@ defmodule Gate.CommandsTest do
     assert {_, 3} = System.cmd(deadline, ["5", "sh", "-c", "exit 3"])
   end
 
+  test "deadline ends its command when its caller dies" do
+    deadline = Path.join(Gate.Sprite.root(), "libexec/deadline")
+    t0 = System.monotonic_time(:millisecond)
+    # The caller exits after a second; the command holds stdout open until it ends.
+    System.cmd("sh", ["-c", ~s("$0" 30 sleep 30 & sleep 1; exit 0), deadline])
+    assert System.monotonic_time(:millisecond) - t0 < 6000
+  end
+
   test "golden: the check tier's parts in turn on one Sprite, a part its Sprite failed run there once more; the stamp on stdout",
        env do
     Fake.parts(env.top, [{"one", "bash cmd.sh green"}, {"two", "bash cmd.sh restart-once"}])

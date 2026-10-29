@@ -7,8 +7,11 @@
 # group, which gets a TERM and, $GATE_KILL_GRACE seconds later (5), a KILL.
 # A TERM or INT to this process stops the group the same way (143, 130), so
 # killing the caller's job ends the exec and anything it started (`script`
-# and the CLI under it). Its stdin is <file>, or /dev/null, so a command
-# never reads the caller's; `--in -` keeps the caller's.
+# and the CLI under it). So does the caller's death (129): a caller killed
+# outright, as rigd is on a restart, would otherwise leave the command
+# running with no one to read it (the gate golden runs and their uploads,
+# 2026-10-29). Its stdin is <file>, or /dev/null, so a command never reads
+# the caller's; `--in -` keeps the caller's.
 use strict;
 use warnings;
 use POSIX ();
@@ -18,6 +21,7 @@ my $in = "/dev/null";
 if (@ARGV && $ARGV[0] eq "--in") { shift; $in = shift; }
 @ARGV or die "usage: deadline <seconds> [--in <file>] <command...>\n";
 my $grace = $ENV{GATE_KILL_GRACE} // 5;
+my $caller = getppid();
 
 my $pid = fork // die "deadline: fork: $!\n";
 unless ($pid) {
@@ -41,7 +45,12 @@ $SIG{ALRM} = sub { stop(142) };
 $SIG{TERM} = sub { stop(143) };
 $SIG{INT} = sub { stop(130) };
 alarm $secs;
-waitpid $pid, 0;
+# The child's exit cuts the sleep short.
+$SIG{CHLD} = sub { };
+until (waitpid($pid, POSIX::WNOHANG()) > 0) {
+  stop(129) if getppid() != $caller;
+  select undef, undef, undef, 0.5;
+}
 my $status = $?;
 # The group may hold what the command left running (a pipe's other end).
 kill "KILL", -$pid;
