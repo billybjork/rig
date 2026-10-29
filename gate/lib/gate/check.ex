@@ -3,7 +3,10 @@ defmodule Gate.Check do
   `gate check [tier]`: the split gate on HEAD. Its parts (the project's
   `parts` command) run at once, one Sprite each from the pool, and the
   pool's last Sprite is the spare (`Gate.Engine` says when a part reruns,
-  there or on a Sprite whose own part has ended). The gate is green when every part is.
+  there or on a Sprite whose own part has ended). On the shared pool
+  (`"pool": "fleet"`), each part runs on a Sprite leased from rigd's
+  `Fleet` as one frees, and reruns on the next. The gate is green when
+  every part is.
 
   The contract the ship worker reads (rig's shipyard/README.md, "A
   project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
@@ -30,10 +33,12 @@ defmodule Gate.Check do
     parts = parts(config, tier)
     n = length(parts)
     pool = config.pool
+    fleet = pool == "fleet"
 
     if n == 0, do: raise(Gate.Error, "the parts command named no part for #{tier}")
+    if fleet, do: Gate.Lease.check!()
 
-    if n >= length(pool),
+    if not fleet and n >= length(pool),
       do:
         raise(
           Gate.Error,
@@ -41,7 +46,7 @@ defmodule Gate.Check do
         )
 
     stamp = Stamp.stamp(config, sha)
-    spare = List.last(pool)
+    spare = if not fleet, do: List.last(pool)
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> short(sha)
     root = System.get_env("SHIPYARD_STATUS_ID", "gate")
     work = Path.join(System.tmp_dir!(), "gate-#{run}-#{System.unique_integer([:positive])}")
@@ -60,10 +65,14 @@ defmodule Gate.Check do
     }
 
     subject = git!(config, ["log", "-1", "--format=%s", "HEAD"])
-    used = Enum.take(pool, n)
+    used = if fleet, do: List.duplicate(:lease, n), else: Enum.take(pool, n)
 
     say.(
-      "#{short(sha)} (#{subject}): #{tier} as #{n} parts on #{Enum.join(used, " ")}, spare #{spare}"
+      "#{short(sha)} (#{subject}): #{tier} as #{n} parts " <>
+        if(fleet,
+          do: "on the shared pool",
+          else: "on #{Enum.join(used, " ")}, spare #{spare}"
+        )
     )
 
     jobs =

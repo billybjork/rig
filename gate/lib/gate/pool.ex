@@ -18,6 +18,13 @@ defmodule Gate.Pool do
 
   alias Gate.{Check, Engine, Sprite, Stamp}
 
+  def main(%{pool: "fleet"}, _args),
+    do:
+      raise(
+        Gate.Error,
+        "this project gates on the shared pool, which rigd's Fleet keeps (bin/rigd status; rig's gate/FLEET.md)"
+      )
+
   def main(config, ["status"]), do: status(config)
   def main(config, []), do: status(config)
 

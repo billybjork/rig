@@ -91,7 +91,12 @@ rigd's `Fleet` (`rigd/lib/rigd/fleet.ex`, the plan in `FLEET.md`) keeps
 the Sprites `fleet.json` names golden: each project's provision gate,
 `gate golden <sprite>` from a detached worktree of its `origin/main`,
 then a checkpoint whose comment names every project's stamp (`gate stamp
-origin/main`). Gates lease its Sprites on `~/Library/Caches/rigd/fleet.sock`.
+origin/main`). A project whose `.gate.json` says `"pool": "fleet"` gates
+on it: each part, its first run and its rerun alike, waits for a Sprite
+leased on `~/Library/Caches/rigd/fleet.sock` (`lib/gate/lease.ex`) and
+gives it back as it ends (`green`, `red`, `failed`, `crashed`), so `gate
+check` needs no spare, only a free Sprite per part as they come; with rigd
+down it exits 2. `gate pool` is then `Fleet`'s, not the project's.
 
 ## The contract
 

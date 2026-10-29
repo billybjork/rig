@@ -26,6 +26,13 @@ defmodule Gate.Engine do
   segfaults on soco's gate Sprites, 2026-10), so one bad Sprite costs a
   rerun, not the gate.
 
+  On the shared pool (a job assigned `:lease`), each part, its first run
+  and its rerun alike, waits for a Sprite leased from rigd's `Fleet`
+  (`Gate.Lease`) and gives it back as it ends, saying how: `green`, `red`,
+  `failed` (the Sprite failed it) or `crashed`. A part reruns on whichever
+  Sprite `Fleet` leases next, any project's. `Fleet` going mid-gate
+  leaves no verdict.
+
   A dropped keeper (the TTY session that keeps the Sprite awake) is
   relaunched while its job runs.
   """
@@ -54,20 +61,24 @@ defmodule Gate.Engine do
   def say(line), do: IO.puts(:stderr, line)
 
   @doc """
-  Runs each `{job, sprite}` at once and returns, in order, each part's
+  Runs each `{job, sprite}` at once (`sprite` may be `:lease`) and returns, in order, each part's
   `%{name, sprite, result, rc, secs, log, reran_from, why}`; `result` is
   `:green`, `:red`, `:sprite_failed` or, for `gate run`, `:overlay`.
   """
   def run(%__MODULE__{} = ctx, assigned) do
     File.mkdir_p!(ctx.config.logs)
     File.mkdir_p!(ctx.work)
-    state = %{parts: %{}, free: List.wrap(ctx.spare), waiting: [], results: %{}}
+    state = %{parts: %{}, free: List.wrap(ctx.spare), waiting: [], results: %{}, pending: %{}}
 
     state =
       assigned
       |> Enum.with_index()
-      |> Enum.reduce(state, fn {{job, sprite}, i}, state ->
-        start(ctx, state, %{i: i, job: job, reran_from: nil}, sprite, "on #{sprite}")
+      |> Enum.reduce(state, fn
+        {{job, :lease}, i}, state ->
+          lease(ctx, state, %{i: i, job: job, reran_from: nil}, nil)
+
+        {{job, sprite}, i}, state ->
+          start(ctx, state, %{i: i, job: job, reran_from: nil}, sprite, "on #{sprite}")
       end)
 
     state = loop(ctx, state)
@@ -76,7 +87,7 @@ defmodule Gate.Engine do
 
   defp loop(ctx, state) do
     cond do
-      map_size(state.parts) > 0 -> loop(ctx, poll_all(ctx, state))
+      map_size(state.parts) > 0 or map_size(state.pending) > 0 -> loop(ctx, poll_all(ctx, state))
       state.waiting != [] -> loop(ctx, give_up(ctx, state))
       true -> state
     end
@@ -84,6 +95,7 @@ defmodule Gate.Engine do
 
   defp poll_all(ctx, state) do
     Process.sleep(Config.limit_ms(ctx.config, "poll"))
+    state = granted(ctx, state)
 
     state.parts
     |> Map.keys()
@@ -98,6 +110,36 @@ defmodule Gate.Engine do
       ctx.say.("#{part.job.name}: no Sprite was free to rerun it")
       done(ctx, state, part, :sprite_failed, rc, "#{why}; no Sprite was free to rerun it")
     end)
+  end
+
+  # A part waits for a Sprite from `Fleet`.
+  defp lease(ctx, state, base, why) do
+    pid = Gate.Lease.request(ctx.config.name, base.job.name, base.i)
+
+    ctx.report.(
+      base,
+      :working,
+      if(why, do: "#{why}; waiting for a Sprite", else: "waiting for a Sprite")
+    )
+
+    put_in(state.pending[base.i], Map.merge(base, %{lease: pid, why: why}))
+  end
+
+  # Starts each part whose Sprite `Fleet` has leased.
+  defp granted(ctx, state) do
+    receive do
+      {:fleet_granted, i, sprite, _pid} ->
+        {base, pending} = Map.pop!(state.pending, i)
+        message = if base.why, do: "#{base.why}; rerunning on #{sprite}", else: "on #{sprite}"
+        if base.why, do: ctx.say.("#{base.job.name}: rerunning on #{sprite}")
+        state = start(ctx, %{state | pending: pending}, Map.delete(base, :why), sprite, message)
+        granted(ctx, state)
+
+      {:fleet_lost, _i, why} ->
+        raise Gate.Error, "rigd's Fleet went mid-gate (#{why}); no verdict"
+    after
+      0 -> state
+    end
   end
 
   defp start(ctx, state, base, sprite, message) do
@@ -118,7 +160,8 @@ defmodule Gate.Engine do
         phase: "setup",
         phase_at: now,
         last_ok: now,
-        warm_relaunched: false
+        warm_relaunched: false,
+        lease: base[:lease]
       })
 
     ctx.report.(part, :working, message)
@@ -306,20 +349,24 @@ defmodule Gate.Engine do
 
       rc != 0 and crashed?(part.log) and part.reran_from == nil ->
         ctx.say.("#{part.job.name}: a process crashed on #{part.sprite} (log #{part.log})")
-        rerun(ctx, state, part, rc, "a native crash, not a gate result")
+        rerun(ctx, state, part, rc, "a native crash, not a gate result", "crashed")
 
       rc != 0 and crashed?(part.log) ->
         ctx.say.(
           "#{part.job.name}: a process crashed on #{part.sprite}, its rerun (log #{part.log})"
         )
 
+        give_back(part, "crashed")
         done(ctx, state, part, :sprite_failed, rc, "a process crashed, on its rerun too")
 
       true ->
         result = if rc == 0, do: :green, else: :red
         ctx.say.("#{part.job.name} #{result} in #{secs(part)} s on #{part.sprite}")
         state = done(ctx, state, part, result, rc, nil)
-        free(ctx, %{state | free: state.free ++ [part.sprite]})
+
+        if part.lease,
+          do: give_back(part, to_string(result)) && state,
+          else: free(ctx, %{state | free: state.free ++ [part.sprite]})
     end
   end
 
@@ -328,23 +375,30 @@ defmodule Gate.Engine do
 
     if part.reran_from == nil do
       ctx.say.("#{part.job.name}: #{part.sprite} failed (#{why})")
-      rerun(ctx, state, part, nil, "#{part.sprite} failed")
+      rerun(ctx, state, part, nil, "#{part.sprite} failed", "failed")
     else
       ctx.say.("#{part.job.name}: #{part.sprite} failed: #{why}")
+      give_back(part, "failed")
       done(ctx, state, part, :sprite_failed, nil, why)
     end
   end
 
-  # A part to rerun leaves the running ones and waits for a free Sprite.
-  defp rerun(ctx, state, part, rc, why) do
-    state = %{
-      state
-      | parts: Map.delete(state.parts, part.i),
-        waiting: state.waiting ++ [{part, rc, why}]
-    }
+  # A part to rerun leaves the running ones and waits for a free Sprite:
+  # one of its own pool's, or the next `Fleet` leases.
+  defp rerun(ctx, state, part, rc, why, how) do
+    state = %{state | parts: Map.delete(state.parts, part.i)}
 
-    free(ctx, state)
+    if part.lease do
+      give_back(part, how)
+      note(part, "#{why}; rerunning on the next Sprite the fleet leases")
+      lease(ctx, state, %{i: part.i, job: part.job, reran_from: part.sprite}, why)
+    else
+      free(ctx, %{state | waiting: state.waiting ++ [{part, rc, why}]})
+    end
   end
+
+  defp give_back(%{lease: nil}, _result), do: :ok
+  defp give_back(%{lease: pid}, result), do: Gate.Lease.release(pid, result)
 
   # Starts each waiting part on a free Sprite, in turn.
   defp free(ctx, %{waiting: [{part, _rc, why} | waiting], free: [sprite | free]} = state) do

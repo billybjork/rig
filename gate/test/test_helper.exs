@@ -154,3 +154,97 @@ defmodule Gate.Fake do
     File.chmod!(path, 0o755)
   end
 end
+
+defmodule Gate.FakeFleet do
+  @moduledoc """
+  rigd's `Fleet` as a gate sees it: a Unix socket that leases `sprites`,
+  idle ones oldest-released first, one per waiting connection, and takes
+  them back. `released/1` lists `{sprite, result}` in order; a connection
+  that closes holding a Sprite gives it back as `"dropped"`.
+  """
+
+  use GenServer
+
+  def start(sprites) do
+    path = Path.join(System.tmp_dir!(), "gate-fleet-#{System.unique_integer([:positive])}.sock")
+    {:ok, pid} = GenServer.start(__MODULE__, {path, sprites})
+    System.put_env("GATE_FLEET_SOCKET", path)
+    pid
+  end
+
+  def released(pid), do: GenServer.call(pid, :released)
+  def stop(pid), do: GenServer.stop(pid)
+
+  @impl true
+  def init({path, sprites}) do
+    {:ok, listen} =
+      :gen_tcp.listen(0, [:binary, packet: :line, active: false, ifaddr: {:local, path}])
+
+    me = self()
+    spawn_link(fn -> accept(listen, me) end)
+    {:ok, %{idle: sprites, waiting: [], held: %{}, released: [], path: path}}
+  end
+
+  @impl true
+  def terminate(_, st), do: File.rm(st.path)
+
+  defp accept(listen, owner) do
+    case :gen_tcp.accept(listen) do
+      {:ok, sock} ->
+        :ok = :gen_tcp.controlling_process(sock, owner)
+        send(owner, {:conn, sock})
+        accept(listen, owner)
+
+      _ ->
+        :ok
+    end
+  end
+
+  @impl true
+  def handle_call(:released, _from, st), do: {:reply, Enum.reverse(st.released), st}
+
+  @impl true
+  def handle_info({:conn, sock}, st) do
+    :inet.setopts(sock, active: true)
+    {:noreply, st}
+  end
+
+  def handle_info({:tcp, sock, line}, st) do
+    st =
+      case JSON.decode!(line) do
+        %{"lease" => _} ->
+          grant(%{st | waiting: st.waiting ++ [sock]})
+
+        %{"release" => %{"sprite" => s, "result" => r}} ->
+          :gen_tcp.send(sock, JSON.encode!(%{released: s}) <> "\n")
+          back(st, sock, s, r)
+      end
+
+    {:noreply, st}
+  end
+
+  def handle_info({:tcp_closed, sock}, st) do
+    st = %{st | waiting: List.delete(st.waiting, sock)}
+
+    case st.held[sock] do
+      nil -> {:noreply, st}
+      s -> {:noreply, back(st, sock, s, "dropped")}
+    end
+  end
+
+  defp back(st, sock, s, r) do
+    grant(%{
+      st
+      | held: Map.delete(st.held, sock),
+        idle: st.idle ++ [s],
+        released: [{s, r} | st.released]
+    })
+  end
+
+  defp grant(%{waiting: [sock | waiting], idle: [s | idle]} = st) do
+    :gen_tcp.send(sock, JSON.encode!(%{granted: s}) <> "\n")
+    grant(%{st | waiting: waiting, idle: idle, held: Map.put(st.held, sock, s)})
+  end
+
+  defp grant(st), do: st
+end

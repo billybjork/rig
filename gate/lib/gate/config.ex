@@ -6,7 +6,8 @@ defmodule Gate.Config do
 
     * `name`: the project; its tree on a Sprite is `~/<name>`, its stamp
       `~/<name>-stamp`, its environment `~/<name>-env.sh`.
-    * `pool`: the gate's Sprites; the last is the spare. `dev`: the Sprites
+    * `pool`: the gate's Sprites; the last is the spare. Or `"fleet"`: the
+      shared pool, whose Sprites are leased from rigd's `Fleet`. `dev`: the Sprites
       `gate run` uses, never in the pool.
     * `logs`: where each part's log and `check-remote.tsv` go; `locks`:
       where the pool's and each dev Sprite's lock files are.

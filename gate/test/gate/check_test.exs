@@ -331,4 +331,52 @@ defmodule Gate.CheckTest do
     {cmd, _} = System.cmd("ps", ["-o", "command=", "-p", pid])
     cmd =~ "tail -f"
   end
+
+  describe "on the shared pool" do
+    @describetag gate: %{"pool" => "fleet"}
+
+    setup do
+      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
+    end
+
+    test "each part on a Sprite the fleet leases as one frees; each given back with its result",
+         env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
+
+      {status, _out, err} =
+        check(env, [
+          {"static", "bash cmd.sh green"},
+          {"test-1", "bash cmd.sh red"},
+          {"test-2", "bash cmd.sh green"}
+        ])
+
+      assert status == 1, err
+      assert err =~ "as 3 parts on the shared pool"
+      released = Gate.FakeFleet.released(fleet)
+      assert Enum.sort(Enum.map(released, &elem(&1, 1))) == ~w(green green red)
+      [row] = Fake.rows(env.logs)
+      assert row =~ ~r/\ttest-2:\d+:gate-[12]:green/
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    test "a crashed part is given back as crashed and reruns on the next Sprite leased", env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
+      {status, _out, err} = check(env, [{"static", "bash cmd.sh crash-once"}])
+      assert status == 0, err
+      assert [{first, "crashed"}, {second, "green"}] = Gate.FakeFleet.released(fleet)
+      assert {first, second} == {"gate-1", "gate-2"}
+      [row] = Fake.rows(env.logs)
+      assert row =~ ":gate-2:green:reran-from-gate-1"
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    test "no verdict when rigd's Fleet does not answer", env do
+      System.put_env("GATE_FLEET_SOCKET", "/nonexistent/fleet.sock")
+      Fake.parts(env.top, [{"static", "bash cmd.sh green"}])
+
+      assert_raise Gate.Error, ~r/Fleet does not answer/, fn ->
+        Gate.Check.main(Fake.config(env.top), [])
+      end
+    end
+  end
 end
