@@ -12,11 +12,12 @@ defmodule Rigd.Fleet.Sprite do
       are ended before it is idle again.
     * `restoring`: back to its golden checkpoint (about 30 s), after a
       part it failed or crashed, and nightly.
-    * `provisioning`: made golden: created when missing, then every
+    * `waiting`, then `provisioning`: made golden: created when missing, then every
       project's provision gate (`gate golden`, `Rigd.Fleet.Golden`) and a
       checkpoint whose comment names each project's stamp (`golden soco
-      13545dd5… heaters 7d1c…`). A provision the Sprite fails is tried once
-      more, then the Sprite is rebuilt (destroyed and created again).
+      13545dd5… heaters 7d1c…`). It waits for its turn (`Rigd.Fleet.turn/2`):
+      one Sprite provisions at a time. A provision the Sprite fails is tried
+      once more, then the Sprite is rebuilt (destroyed and created again).
 
   A part it failed or crashed is a strike; three in a day retire it: it is
   destroyed and built again under the same name (Billy: Sprites are
@@ -103,6 +104,8 @@ defmodule Rigd.Fleet.Sprite do
       strikes: [],
       failures: 0,
       task: nil,
+      # The provision waiting for its turn: {:provision, create?}.
+      waiting: nil,
       why: nil
     }
 
@@ -138,7 +141,18 @@ defmodule Rigd.Fleet.Sprite do
   @impl true
   def handle_cast(:restore, %{status: :idle} = st), do: {:noreply, work(st, :restoring, :restore)}
   def handle_cast(:regolden, %{status: :idle} = st), do: {:noreply, provision(st, false)}
-  def handle_cast(:tell, st), do: {:noreply, tell(st)}
+
+  def handle_cast(:tell, st) do
+    # `Fleet` restarted: it learns the turn again.
+    case st do
+      %{waiting: {:provision, _}} -> Rigd.Fleet.turn(st.fleet, self())
+      %{task: {_, {:provision, _}}} -> Rigd.Fleet.holding(st.fleet, self())
+      _ -> :ok
+    end
+
+    {:noreply, tell(st)}
+  end
+
   def handle_cast(_, st), do: {:noreply, st}
 
   @impl true
@@ -148,16 +162,29 @@ defmodule Rigd.Fleet.Sprite do
     {:noreply, work(%{st | holder: nil}, :leased, :end_parts)}
   end
 
+  def handle_info(:fleet_turn, %{waiting: {:provision, _} = step} = st),
+    do: {:noreply, work(%{st | waiting: nil}, :provisioning, step)}
+
+  def handle_info(:fleet_turn, st) do
+    Rigd.Fleet.turn_done(st.fleet, self())
+    {:noreply, st}
+  end
+
   def handle_info({ref, result}, %{task: {ref, step}} = st) do
     Process.demonitor(ref, [:flush])
-    {:noreply, done(%{st | task: nil}, step, result)}
+    {:noreply, finished(st, step, result)}
   end
 
   def handle_info({:DOWN, ref, :process, _, why}, %{task: {ref, step}} = st),
-    do: {:noreply, done(%{st | task: nil}, step, {:error, "the task died: #{inspect(why)}"})}
+    do: {:noreply, finished(st, step, {:error, "the task died: #{inspect(why)}"})}
 
   def handle_info({:again, step}, %{task: nil} = st), do: {:noreply, again(st, step)}
   def handle_info(_, st), do: {:noreply, st}
+
+  defp finished(st, step, result) do
+    if match?({:provision, _}, step), do: Rigd.Fleet.turn_done(st.fleet, self())
+    done(%{st | task: nil}, step, result)
+  end
 
   defp again(st, {:provision, create?}), do: provision(st, create?)
   defp again(st, step), do: work(st, st.status, step)
@@ -171,7 +198,10 @@ defmodule Rigd.Fleet.Sprite do
     tell(%{st | status: status, task: {task.ref, step}})
   end
 
-  defp provision(st, create?), do: work(st, :provisioning, {:provision, create?})
+  defp provision(st, create?) do
+    Rigd.Fleet.turn(st.fleet, self())
+    tell(%{st | status: :provisioning, waiting: {:provision, create?}})
+  end
 
   defp run(:check, name, _golden, _opts) do
     with {:ok, sprites} <- CLI.list() do
@@ -198,12 +228,11 @@ defmodule Rigd.Fleet.Sprite do
   end
 
   defp run(:rebuild, name, _golden, _opts) do
-    with :ok <- CLI.ok(["destroy", "--force", "-s", name], 300),
-         do: CLI.ok(["create", "--skip-console", name], 300)
+    with :ok <- destroy(name), do: create(name)
   end
 
   defp run({:provision, create?}, name, _golden, opts) do
-    with :ok <- if(create?, do: CLI.ok(["create", "--skip-console", name], 300), else: :ok),
+    with :ok <- if(create?, do: create(name), else: :ok),
          {:ok, stamps} <- gates(opts, name),
          :ok <-
            CLI.ok(["checkpoint", "create", "-s", name, "-comment", golden_comment(stamps)], 600),
@@ -214,6 +243,14 @@ defmodule Rigd.Fleet.Sprite do
       end
     end
   end
+
+  # A call that outlasted its deadline may still have done its work, so the
+  # retry finds the Sprite already gone, or already there: done either way.
+  defp destroy(name),
+    do: CLI.ok(["destroy", "--force", "-s", name], 300, ~r/sprite not found/i)
+
+  defp create(name),
+    do: CLI.ok(["create", "--skip-console", name], 300, ~r/already exists/i)
 
   # Every project's provision gate, in turn: `{:ok, stamps}`, or the first
   # that did not pass.
@@ -295,7 +332,7 @@ defmodule Rigd.Fleet.Sprite do
       st.fleet,
       {:sprite, st.name,
        %{
-         status: st.status,
+         status: if(st.waiting, do: :waiting, else: st.status),
          stamps: st.golden && st.golden.stamps,
          served: st.served,
          strikes: length(st.strikes),

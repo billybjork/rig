@@ -11,15 +11,23 @@ defmodule Rigd.FleetTest do
   @newer "fedcba9876543210"
 
   # A `sprite` CLI whose Sprites are directories under $FAKE_SPRITES; every
-  # call is appended to `calls`.
+  # call is appended to `calls`. It fails as the real one does on a Sprite
+  # already there or already gone; `<name>.create-times-out` makes the next
+  # create of that Sprite outlast its deadline after making it.
   @cli ~S"""
   #!/bin/bash
   root=$FAKE_SPRITES
   echo "$*" >>"$root/calls"
   case "$1 $2" in
     "list "*) for d in "$root"/*/; do [ -d "$d" ] && basename "$d"; done; exit 0 ;;
-    "create "*) mkdir -p "$root/$3"; exit 0 ;;
-    "destroy "*) rm -rf "${root:?}/$4"; exit 0 ;;
+    "create "*)
+      [ -d "$root/$3" ] && { echo "Error: A sprite named '$3' already exists."; exit 1; }
+      mkdir -p "$root/$3"
+      [ -f "$root/$3.create-times-out" ] && { rm "$root/$3.create-times-out"; exit 142; }
+      exit 0 ;;
+    "destroy "*)
+      [ -d "$root/$4" ] || { echo "Error: failed to destroy sprite: sprite not found"; exit 1; }
+      rm -rf "${root:?}/$4"; exit 0 ;;
     "checkpoint list") cat "$root/$4/checkpoints" 2>/dev/null; exit 0 ;;
     "checkpoint create")
       n=$(($(wc -l <"$root/$4/checkpoints" 2>/dev/null || echo 0) + 1))
@@ -30,10 +38,27 @@ defmodule Rigd.FleetTest do
   """
 
   defmodule Golden do
-    @moduledoc "A provision gate per Sprite as the test sets it: `{:golden, sprite}` in persistent_term."
+    @moduledoc """
+    A provision gate per Sprite as the test sets it: `{:golden, sprite}` in
+    persistent_term, each result or a function returning one. With `{:golden,
+    :log}` set, each run writes when it starts and ends there.
+    """
     def stamp(_gate, _dir), do: {:ok, "proj", :persistent_term.get({__MODULE__, :stamp})}
 
-    def run(_gate, _dir, sprite) do
+    def run(gate, dir, sprite) do
+      if log = :persistent_term.get({__MODULE__, :log}, nil) do
+        File.write!(log, "start #{sprite}\n", [:append])
+        Process.sleep(200)
+        result = result(sprite)
+        File.write!(log, "end #{sprite}\n", [:append])
+        result
+      else
+        result(sprite)
+      end
+      |> then(fn r -> if is_function(r), do: r.(gate, dir), else: r end)
+    end
+
+    defp result(sprite) do
       case :persistent_term.get({__MODULE__, sprite}, []) do
         [next | rest] ->
           :persistent_term.put({__MODULE__, sprite}, rest)
@@ -67,6 +92,7 @@ defmodule Rigd.FleetTest do
 
     on_exit(fn ->
       for s <- opts[:sprites], do: :persistent_term.erase({Golden, s})
+      :persistent_term.erase({Golden, :log})
     end)
 
     %{root: root, opts: opts}
@@ -193,6 +219,39 @@ defmodule Rigd.FleetTest do
     assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
   end
 
+  test "Sprites provision one at a time", %{root: root, opts: opts} do
+    log = Path.join(root, "golden.log")
+    :persistent_term.put({Golden, :log}, log)
+    start(opts)
+    until(fn -> status("rig-gate-1") == :idle and status("rig-gate-2") == :idle end)
+
+    assert [["start", a], ["end", a], ["start", b], ["end", b]] =
+             log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&String.split/1)
+
+    assert Enum.sort([a, b]) == ~w(rig-gate-1 rig-gate-2)
+  end
+
+  test "a create that outlasted its deadline but made the Sprite is done on its retry",
+       %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    File.write!(Path.join(root, "rig-gate-2.create-times-out"), "")
+    start(opts)
+    until(fn -> status("rig-gate-2") == :idle end)
+    assert length(String.split(calls(root), "create --skip-console rig-gate-2")) == 3
+    assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
+  end
+
+  test "a rebuild of a Sprite already gone creates it", %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    failed = {:sprite_failed, "restarted"}
+    gone = fn _gate, _dir -> File.rm_rf!(Path.join(root, "rig-gate-2")) && failed end
+    :persistent_term.put({Golden, "rig-gate-2"}, [failed, gone])
+    start(opts)
+    until(fn -> status("rig-gate-2") == :idle end)
+    assert calls(root) =~ "destroy --force -s rig-gate-2"
+    assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
+  end
+
   test "a stamp change makes idle Sprites golden again, one at a time", %{root: root, opts: opts} do
     for s <- opts[:sprites], do: golden_sprite(root, s, @stamp)
     :persistent_term.put({Golden, :stamp}, @newer)
@@ -226,6 +285,7 @@ defmodule Rigd.FleetTest do
     assert Fleet.stale(%{"a" => old}, now) == "a"
     assert Fleet.stale(%{"a" => %{old | stamps: now}}, now) == nil
     assert Fleet.stale(%{"a" => old, "b" => %{old | status: :provisioning}}, now) == nil
+    assert Fleet.stale(%{"a" => old, "b" => %{old | status: :waiting}}, now) == nil
     assert Fleet.stale(%{"a" => old}, %{}) == nil
   end
 

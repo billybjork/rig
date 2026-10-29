@@ -40,10 +40,16 @@ defmodule Rigd.Fleet.CLI do
     end
   end
 
-  def ok(args, secs) do
+  @doc "`:ok` when the call exits 0, or fails with output matching `done` (its work was already done)."
+  def ok(args, secs, done \\ nil) do
     case call(args, secs) do
-      {_, 0} -> :ok
-      {out, status} -> {:error, "sprite #{hd(args)} exited #{status}: #{last_line(out)}"}
+      {_, 0} ->
+        :ok
+
+      {out, status} ->
+        if done && status != 142 && out =~ done,
+          do: :ok,
+          else: {:error, "sprite #{hd(args)} exited #{status}: #{last_line(out)}"}
     end
   end
 

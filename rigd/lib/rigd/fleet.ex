@@ -10,6 +10,11 @@ defmodule Rigd.Fleet do
   its project since its last restore (its tree and build caches are
   there), else any. A waiter that goes leaves the queue.
 
+  One Sprite provisions at a time, in turn (`turn/2`): a fresh Sprite
+  takes each project's whole history as a git bundle (soco's is 320 MiB),
+  and nine at once from the laptop outlasted the upload's limit on every
+  try, together (2026-10-29).
+
   Every 10 minutes it reads each project's stamp on `origin/main`. An idle
   Sprite whose golden checkpoint was taken under other stamps is made
   golden again, one at a time and only while no gate waits: its gates
@@ -33,6 +38,15 @@ defmodule Rigd.Fleet do
 
   def release(sprite, holder, result), do: Sprite.release(sprite, holder, result)
 
+  @doc "Asks for the turn to provision; `pid` gets `:fleet_turn` when it has it."
+  def turn(fleet, pid), do: GenServer.cast(fleet, {:turn, pid})
+
+  @doc "Says `pid` holds the turn (a Sprite provisioning when `Fleet` restarted)."
+  def holding(fleet, pid), do: GenServer.cast(fleet, {:holding, pid})
+
+  @doc "Gives the turn back."
+  def turn_done(fleet, pid), do: GenServer.cast(fleet, {:turn_done, pid})
+
   @doc "Each Sprite's state, the current stamps, and the queue's length."
   def status, do: GenServer.call(__MODULE__, :status)
 
@@ -52,7 +66,7 @@ defmodule Rigd.Fleet do
 
   @doc "The idle Sprite to make golden again under `stamps`, or nil."
   def stale(sprites, stamps) when map_size(stamps) > 0 do
-    busy = Enum.any?(sprites, fn {_, s} -> s.status == :provisioning end)
+    busy = Enum.any?(sprites, fn {_, s} -> s.status in [:waiting, :provisioning] end)
 
     unless busy do
       Enum.find_value(Enum.sort(sprites), fn {name, s} ->
@@ -97,6 +111,8 @@ defmodule Rigd.Fleet do
        opts: opts,
        sprites: Map.new(opts[:sprites], &{&1, %{status: :checking, stamps: nil, served: []}}),
        queue: [],
+       turn: nil,
+       turns: [],
        stamps: %{},
        reading: nil
      }}
@@ -109,6 +125,26 @@ defmodule Rigd.Fleet do
     {:noreply, grant(%{st | queue: st.queue ++ [waiter]})}
   end
 
+  def handle_cast({:turn, pid}, st) do
+    if Enum.any?([st.turn | st.turns], &match?({^pid, _}, &1)) do
+      {:noreply, st}
+    else
+      {:noreply, next_turn(%{st | turns: st.turns ++ [{pid, Process.monitor(pid)}]})}
+    end
+  end
+
+  def handle_cast({:holding, pid}, %{turn: nil} = st),
+    do: {:noreply, %{st | turn: {pid, Process.monitor(pid)}}}
+
+  def handle_cast({:holding, _pid}, st), do: {:noreply, st}
+
+  def handle_cast({:turn_done, pid}, %{turn: {pid, ref}} = st) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, next_turn(%{st | turn: nil})}
+  end
+
+  def handle_cast({:turn_done, _pid}, st), do: {:noreply, st}
+
   @impl true
   def handle_call(:status, _from, st) do
     {:reply, %{sprites: st.sprites, stamps: st.stamps, waiting: length(st.queue)}, st}
@@ -120,8 +156,16 @@ defmodule Rigd.Fleet do
     {:noreply, st |> grant() |> roll()}
   end
 
-  def handle_info({:DOWN, ref, :process, _, _}, st),
-    do: {:noreply, %{st | queue: Enum.reject(st.queue, &(&1.ref == ref))}}
+  def handle_info({:DOWN, ref, :process, _, _}, st) do
+    st = %{
+      st
+      | queue: Enum.reject(st.queue, &(&1.ref == ref)),
+        turns: Enum.reject(st.turns, &match?({_, ^ref}, &1)),
+        turn: if(match?({_, ^ref}, st.turn), do: nil, else: st.turn)
+    }
+
+    {:noreply, next_turn(st)}
+  end
 
   def handle_info(:stamps, %{reading: nil} = st) do
     Process.send_after(self(), :stamps, @stamps_every)
@@ -177,6 +221,14 @@ defmodule Rigd.Fleet do
 
     %{st | queue: queue, sprites: sprites}
   end
+
+  # The turn to provision goes to the next Sprite asking for it.
+  defp next_turn(%{turn: nil, turns: [{pid, _} = next | turns]} = st) do
+    send(pid, :fleet_turn)
+    %{st | turn: next, turns: turns}
+  end
+
+  defp next_turn(st), do: st
 
   defp roll(%{queue: []} = st) do
     if name = stale(st.sprites, st.stamps) do
