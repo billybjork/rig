@@ -95,8 +95,8 @@ in the project.
 - **Reading it.** `bin/shipyard wait <project> <pr>` waits silently until
   the label is off, prints the newest result, and exits 0 only on `live`.
   `bin/shipyard watch <project> <pr>` runs that wait in a Rex background
-  terminal: a block in the caller's session that no tab shows (a tab in
-  the session `Shipyard` when there is no session), and prints its block:
+  terminal: a block in the caller's session that no tab shows (in the
+  session `Shipyard` when there is no session), and prints its block:
   `rex wait -s <session> <block> --for 9m` returns the wait's exit status
   when the ship ends (repeat it on a timeout), `rex capture` reads the
   result, and `rex block close` ends it. A wait in its own terminal belongs
@@ -144,12 +144,14 @@ as `KEY=value` lines (`~/dev/rig`, "Secrets"). It stops once the queue has
 been empty, with no roll running or waiting, for a minute. The next ship
 starts it on fresh code.
 
-Where a Rex server runs, the worker runs in a Rex tab: the session
-`Shipyard`, a tab named for the project, out of focus, showing its log
-and status. The tab closes when the worker ends cleanly, and the
-session with it when no other worker's tab is left, so a finished worker
-leaves no tab behind; a worker that fails keeps its tab, with the exit
-status, until Enter. A Rex terminal outlives whatever started it, which an
+Where a Rex server runs, the worker runs in a Rex background terminal (a
+block no tab shows) in the session `Shipyard`, named for the project and
+showing its log and status; rig's palette action "Shipyard: Show the
+Workers" gives each its own tab there, and "Background: Hide This Pane"
+sends one back. The terminal closes when the worker ends cleanly, and the
+session with it when nothing else is left in it, so a finished worker
+leaves nothing behind; a worker that fails keeps its terminal, with the
+exit status, until Enter or the next start. A Rex terminal outlives whatever started it, which an
 agent's command does not (a harness kills its process group when the
 command ends). Without Rex (launchd's poll before login, or
 `SHIPYARD_REX=0`) the worker runs detached in its own session instead.

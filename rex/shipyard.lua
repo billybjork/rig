@@ -1,4 +1,4 @@
--- Shipyard and the Sprites in Rex: the ship workers' session, each
+-- Shipyard and the Sprites in Rex: the ship workers, each
 -- project's queue and gate pool, and a console on any Sprite. Find them in
 -- the command palette under "Shipyard" and "Sprites".
 --
@@ -45,22 +45,49 @@ local function exists(path)
   return f ~= nil
 end
 
+-- The workers run in background terminals in the session Shipyard (blocks
+-- no tab shows; `bin/shipyard start`). Showing them gives each its own tab
+-- there: a placeholder opens the tab, the worker goes beside it, and the
+-- placeholder closes. "Background: Hide This Pane" sends one back.
 rex.action{
   name = "shipyard_workers",
   title = "Shipyard: Show the Workers",
-  description = "Switch to the Shipyard session, where each project's ship worker runs in its own tab.",
+  description = "Switch to the Shipyard session, giving each ship worker (and each wait there) its own tab.",
   category = "Shipyard",
-  keywords = "ship worker queue gate roll shipyard",
+  keywords = "ship worker queue gate roll shipyard background",
   run = function()
     local list, err = rex.call("session.list", {})
     if list == nil then error(err, 0) end
+    local session
     for _, s in ipairs(list.sessions or {}) do
-      if s.label == "Shipyard" then
-        rex.client.queue("session.select", { session_id = s.session_id })
-        return { session_id = s.session_id }
+      if s.label == "Shipyard" then session = s.session_id end
+    end
+    if session == nil then
+      error("no worker runs in Rex: the next ship starts one in a Shipyard session", 0)
+    end
+    local blocks, berr = rex.call("session.list_blocks", { session_id = session })
+    if blocks == nil then error(berr, 0) end
+    for _, b in ipairs(blocks.blocks or {}) do
+      if b.placement == "detached" and b.creator_name == terminal then
+        local w, werr = rex.call("session.new_window", {
+          session_id = session,
+          window_label = b.label,
+          focus = false,
+          layout = { block = { flavor = terminal .. ".shell", label = "placeholder" } },
+        })
+        if w == nil then error(werr, 0) end
+        local placeholder = w.block_ids[1]
+        local _, merr = rex.call("session.move_block", {
+          session_id = session,
+          block_id = b.block_id,
+          anchor_block_id = placeholder,
+        })
+        rex.call("block.close", { session_id = session, block_id = placeholder })
+        if merr ~= nil then error(merr, 0) end
       end
     end
-    error("no worker has run in Rex yet: the next ship starts one in a Shipyard session", 0)
+    rex.client.queue("session.select", { session_id = session })
+    return { session_id = session }
   end,
 }
 

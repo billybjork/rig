@@ -1,7 +1,7 @@
 defmodule Shipyard.Status do
   @moduledoc """
   What the worker is doing, told to the terminal it runs in as Program
-  Status reports (OSC 7501), so a Rex tab (`bin/shipyard start`) shows a
+  Status reports (OSC 7501), so its Rex terminal (`bin/shipyard start`) shows a
   spinner while it works and a mark for each ship's end without anyone
   reading its log. The protocol:
   https://www.superlogical.com/rex/docs/build/program-status.md
@@ -11,13 +11,13 @@ defmodule Shipyard.Status do
   of its own, `pr-<number>`, titled with its number and title: `working`
   with its step while the worker has it, then `done` when it is live and
   `error` for any other end. A `done` or `error` record outlives the
-  worker, so the tab keeps each ship's end until it is looked at. The
+  worker, so the terminal keeps each ship's end until it is looked at. The
   gate runs with `SHIPYARD_STATUS_ID` set to its PR's record id, so a
   project's gate can report its parts beneath it (`pr-12/static-1`) to
   `SHIPYARD_STATUS_TTY`.
 
   Reports go to `ship.status`, never to stdout or the log: the terminal
-  device the worker's Rex tab names in `SHIPYARD_STATUS_TTY`, else the
+  device the worker's Rex terminal names in `SHIPYARD_STATUS_TTY`, else the
   controlling terminal (`/dev/tty`). The gate gets the same device in
   `SHIPYARD_STATUS_TTY`, since a command the worker runs has no
   controlling terminal of its own. A worker with no terminal

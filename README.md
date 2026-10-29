@@ -110,7 +110,7 @@ Done: this repository; the shared guide and `handoff` skill; Rex config moved
 in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
 every `.env` deleted, `.env.example` kept; shipyard's worker reads the deploy
 tier; agents' deny rules); shells in background terminals (`bin/bg`,
-shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
+shipyard's watch and workers, the palette's Show and Hide); rigd (step 2) running under
 launchd with Activity, Presence, Awake, Notify, and RexBadges. Step 3's
 first slice: shipyard lives in `shipyard/` with its history; soco #373 and
 heaters #535 point their ship commands at it. The `~/dev/shipyard` symlink

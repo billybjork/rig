@@ -24,15 +24,17 @@
 # .../logs/worker.log, and exits once the queue is empty and no roll runs or
 # waits. `--if-queued` starts it only when a PR carries the `ship` label.
 # Where a Rex server runs, the worker runs in the Rex session Shipyard, in a
-# tab named for the project that shows its log and status. The tab closes
-# when the worker ends cleanly, and the session with its last tab; a worker
-# that fails keeps its tab until Enter. Elsewhere (launchd before login,
-# SHIPYARD_REX=0) it runs detached.
+# background terminal (a block no tab shows) named for the project that
+# shows its log and status; the palette's "Shipyard: Show the Workers" gives
+# each its own tab there. The terminal closes when the worker ends cleanly,
+# and the session with its last terminal; a worker that fails keeps its
+# terminal until Enter, or until the next start replaces it. Elsewhere
+# (launchd before login, SHIPYARD_REX=0) it runs detached.
 #
 # `watch` is `wait` where an agent or Billy can reach it: a background
-# terminal in the Rex session it's called from (a block no tab shows; the
-# palette's "Background: Show" places it), or a tab in the session Shipyard
-# when it isn't called from one. It prints the terminal's block; `rex wait
+# terminal in the Rex session it's called from (the palette's "Background:
+# Show" places it), or in the session Shipyard when it isn't called from
+# one. It prints the terminal's block; `rex wait
 # -s <session> <block> --for 9m` returns wait's exit status once the ship
 # ends (on a timeout it exits 1 saying so; repeat it), and `rex capture`
 # reads the result. The terminal stays until it's closed (`rex block
@@ -130,8 +132,8 @@ start() {
   mix_in "$app/shipyard" compile >>"$home/logs/worker.log" 2>&1 || die "the worker does not compile; see $home/logs/worker.log"
 
   rm -f "$home/worker.pid"
-  if worker_tab; then
-    where="in Rex (session $rex_session, tab $name)"
+  if worker_bg; then
+    where="in Rex (session $rex_session, background terminal $name)"
   else
     # Its own session, so it outlives whatever started it: an agent harness
     # kills a command's process group when the command ends. macOS has no
@@ -144,55 +146,68 @@ start() {
   say "$name: started $where (pid $(cat "$home/worker.pid")) at $(git -C "$repo" rev-parse --short HEAD), worker $(git -C "$app" rev-parse --short HEAD); log: $home/logs/worker.log"
 }
 
-# The Rex session the workers' tabs are in.
+# The Rex session the workers' terminals are in.
 rex_session=Shipyard
 
 # rex without starting a server: a machine with no Rex running (launchd's
 # poll before login) runs the worker detached.
 rexc() { rex --autostart=false "$@"; }
 
-# Whether a Rex server runs here to open tabs in.
+# Whether a Rex server runs here to open terminals in.
 rex_here() { command -v rex >/dev/null && rexc whoami >/dev/null 2>&1; }
 
-# Opens a tab labeled $2 at $3 running the rest, not in focus, in session
-# $1 (an id), or in the session labeled $rex_session when $1 is empty,
-# which it creates when there is none. Prints the session's id and the
-# tab's block. The tab stays open once its command ends unless $keep is
-# empty.
-rex_tab() {
-  local session=$1 label=$2 dir=$3 out
-  shift 3
-  local open=(${keep---keep-open})
-  [ -n "$session" ] ||
-    session=$(rexc ls --json | jq -r --arg l "$rex_session" '[.sessions[] | select(.label == $l)][0].session_id // empty')
-  if [ -n "$session" ]; then
-    out=$(rexc window new -s "$session" "$label" -c "$dir" ${open[@]+"${open[@]}"} --focus=false --json -- "$@") &&
-      echo "$session $(jq -er '.block_ids[0]' <<<"$out")"
-  else
-    out=$(rexc new "$rex_session" --window "$label" -c "$dir" ${open[@]+"${open[@]}"} --json -- "$@") &&
-      jq -er '"\(.session_id) \(.initial_windows[0].block_ids[0])"' <<<"$out"
-  fi
+# The id of the session labeled $rex_session, or nothing.
+shipyard_session() {
+  rexc ls --json | jq -r --arg l "$rex_session" '[.sessions[] | select(.label == $l)][0].session_id // empty'
 }
 
-# Starts the worker in the tab labeled with the project's name in the Rex
-# session $rex_session, replacing the last worker's tab, when a Rex server
-# runs here and SHIPYARD_REX is not 0. A Rex terminal outlives whatever
-# started it, as the detached worker does, and the tab shows the worker's
-# log and status (lib/shipyard/status.ex) while it runs (worker_in_tab).
-# Fails, starting nothing, when there's no Rex to start it in.
-worker_tab() {
+# Opens a background terminal (a block no tab shows) labeled $2 at $3
+# running the rest in an interactive login zsh, in session $1 (an id), or in
+# the session labeled $rex_session when $1 is empty, which it creates, with
+# no tabs, when there is none. Prints the session's id and the block. The
+# terminal stays open once its command ends unless $keep is empty. The
+# command reaches jq as NUL-separated input, so its flags stay its own.
+rex_bg() {
+  local session=$1 label=$2 dir=$3 block
+  shift 3
+  if [ -z "$session" ]; then
+    session=$(shipyard_session)
+    [ -n "$session" ] ||
+      session=$(jq -n --arg l "$rex_session" '{label: $l}' | rexc api call session.create - | jq -er .session_id) ||
+      return 1
+  fi
+  block=$(printf '%s\0' "$@" | jq -Rs --arg label "$label" --arg cwd "$dir" --argjson close "$([ -z "${keep-x}" ] && echo true || echo false)" \
+    '{flavor: "com.superlogical.terminal.shell", label: $label,
+      options: {cwd: $cwd, command: (["/bin/zsh", "-lic", "exec \"$@\"", "zsh"] + (split("\u0000") | .[:-1])),
+                exit: {on_completion: $close}}}' |
+    rexc api call -s "$session" session.new_block - | jq -er .block_id) &&
+    echo "$session $block"
+}
+
+# Starts the worker in the background terminal labeled with the project's
+# name in the Rex session $rex_session, replacing the last worker's (shown
+# in a tab or not), when a Rex server runs here and SHIPYARD_REX is not 0. A
+# Rex terminal outlives whatever started it, as the detached worker does,
+# and it shows the worker's log and status (lib/shipyard/status.ex) while it
+# runs (worker_in_bg). Fails, starting nothing, when there's no Rex to start
+# it in.
+worker_bg() {
   [ "${SHIPYARD_REX:-1}" != 0 ] && rex_here || return 1
   local session old
-  session=$(rexc ls --json | jq -r --arg l "$rex_session" '[.sessions[] | select(.label == $l)][0].session_id // empty')
+  session=$(shipyard_session)
   if [ -n "$session" ]; then
+    for old in $(rexc api call -s "$session" session.list_blocks '{}' | jq -r --arg l "$name" '.blocks[]? | select(.label == $l) | .block_id'); do
+      rexc block close -s "$session" "$old" >/dev/null || true
+    done
+    # A worker started before they were background terminals ran in a tab.
     for old in $(rexc window ls -s "$session" --json | jq -r --arg l "$name" '.windows[] | select(.label == $l) | .window_id'); do
       rexc window close -s "$session" "$old" >/dev/null || true
     done
   fi
-  keep='' rex_tab "$session" "$name" "$home" "$self/bin/shipyard" _worker_tab "$top" >/dev/null || return 1
-  # The tab writes the pid as it starts; wait for it, so a second start sees it.
+  keep='' rex_bg "$session" "$name" "$home" "$self/bin/shipyard" _worker_bg "$top" >/dev/null || return 1
+  # The terminal writes the pid as it starts; wait for it, so a second start sees it.
   for _ in $(seq 100); do [ -s "$home/worker.pid" ] && return 0 || sleep 0.1; done
-  die "the worker's Rex tab started but wrote no pid to $home/worker.pid"
+  die "the worker's Rex terminal started but wrote no pid to $home/worker.pid"
 }
 
 # `wait`, or the command after `--`, in a pane: see watch at the top.
@@ -208,29 +223,19 @@ watch() {
     say "no Rex here; waiting in this terminal" >&2
     exec "${cmd[@]}"
   fi
-  if [ -n "${REX_SESSION:-}" ]; then
-    # A background terminal: a block in the caller's session that no tab
-    # shows (Billy brings it into view from the palette, "Background: Show").
-    # The command reaches jq as NUL-separated input, so its flags stay its own.
-    session=$REX_SESSION
-    block=$(printf '%s\0' "${cmd[@]}" | jq -Rs --arg label "ship #$pr" --arg cwd "$top" \
-      '{flavor: "com.superlogical.terminal.shell", label: $label,
-        options: {cwd: $cwd, command: (["/bin/zsh", "-lic", "exec \"$@\"", "zsh"] + (split("\u0000") | .[:-1])),
-                  exit: {on_completion: false}}}' |
-      rexc api call -s "$session" session.new_block - | jq -er .block_id)
-  else
-    read -r session block < <(rex_tab "" "ship #$pr" "$top" "${cmd[@]}")
-  fi
+  # In the caller's session (Billy brings it into view from the palette,
+  # "Background: Show"), or in the session Shipyard.
+  read -r session block < <(rex_bg "${REX_SESSION:-}" "ship #$pr" "$top" "${cmd[@]}")
   [ -n "$block" ] || die "opening a Rex terminal to wait in failed"
   echo "$block"
   say "#$pr: waiting in background terminal 'ship #$pr' (block $block). Then: rex wait -s $session $block --for 9m; rex capture -s $session -b $block --trim | tail -n 40; rex block close -s $session $block" >&2
 }
 
-# The worker's tab: the worker, its pid in worker.pid and its output in the
-# tab and worker.log. A clean end closes the tab (it has no keep-open), and
-# the session too when this was its last tab, so no stray tab stays; a
-# failure stays on screen until Enter.
-worker_in_tab() {
+# The worker's terminal: the worker, its pid in worker.pid and its output in
+# the terminal and worker.log. A clean end closes the terminal (it is not
+# kept open), and the session too when this was its last block, so no stray
+# stays; a failure stays until Enter.
+worker_in_bg() {
   project "$1"
   local pid status
   SHIPYARD_STATUS_TTY=$(tty) && export SHIPYARD_STATUS_TTY
@@ -242,16 +247,16 @@ worker_in_tab() {
   wait "$pid" || status=$?
   if [ "$status" = 0 ]; then
     [ -n "${REX_SESSION:-}" ] &&
-      [ "$(rexc window ls -s "$REX_SESSION" --json | jq '.windows | length')" = 1 ] &&
+      [ "$(rexc api call -s "$REX_SESSION" session.list_blocks '{}' | jq '.blocks | length')" = 1 ] &&
       rexc session kill "$REX_SESSION" >/dev/null 2>&1
     exit 0
   fi
-  say "the worker exited $status; log: $home/logs/worker.log. Enter closes this tab."
+  say "the worker exited $status; log: $home/logs/worker.log. Enter closes this terminal."
   read -r _ || true
   exit "$status"
 }
 
-# The worker itself, in this process (the Rex tab's or the detached one):
+# The worker itself, in this process (the Rex terminal's or the detached one):
 # `mix run` in the worker's own clone, under caffeinate where there is one,
 # with the project's deploy secrets (the roll's settings) and rig's push
 # topic, RIG_NTFY_TOPIC. Both come from fnox's deploy tier: the project's
@@ -332,8 +337,8 @@ main() {
     _worker)
       run_worker "${2:-}"
       ;;
-    _worker_tab)
-      worker_in_tab "${2:-}"
+    _worker_bg)
+      worker_in_bg "${2:-}"
       ;;
     *) usage ;;
   esac
