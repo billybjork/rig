@@ -104,7 +104,7 @@ The audit behind this (Sprite failure modes, duplication, secrets) is in the
 session of 2026-10-28; the Sprite gate's open items are in
 `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`.
 
-## Where we are (2026-10-28)
+## Where we are (2026-10-29)
 
 Done: this repository; the shared guide and `handoff` skill; Rex config moved
 in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
@@ -114,17 +114,50 @@ shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
 launchd with Activity, Presence, Awake, Notify, and RexBadges. Step 3's
 first slice: shipyard lives in `shipyard/` with its history; soco #373 and
 heaters #535 point their ship commands at it. `~/dev/shipyard` is a symlink
-to `rig/shipyard` for worktrees cut before #373 and #535; remove it once
-none remain.
+to `rig/shipyard` for worktrees cut before #373 and #535: soco's
+`claude-node24-security` and heaters' `.claude/worktrees/design-workshop`
+still carry unshipped commits whose ship scripts call it (Billy decides
+when it goes).
 
 Step 3's slice 2, done: `gate/` (its README) is the shared runner, parts
 detached on their Sprites (22 tests, `gate/bin/gate self-check`); the
 worker exports `RIG`, its clone of rig, and reads the queue through
-GraphQL. soco (#376) and heaters (#544) gate on it. soco-gate-1, which
-rebooted mid-dialyzer all day, was rebuilt and gates green again; soco
-#379 dropped a stale npm acceptance that reddened every gate.
+GraphQL. soco (#376) and heaters (#544) gate on it. Its follow-ups are
+live: soco #381 pins the claim fixtures' week shift once per run (a run
+across UTC midnight on a week boundary moved them mid-test); #384
+reweighs the suite's partitions; #385 and heaters #548 fix the
+`provision.sh` headers (each pool re-stamped once), and #385 installs gdb.
+After the re-stamp only soco-gate-4 is checkpointed (v17); soco-gate-1
+crashed, then lost a part's directory, in its two provision gates.
 
-Next: the projects' `provision.sh` headers still describe the old upload
-(edit them now that both use the new runner: it re-stamps each pool once);
-stale `gate_weights.exs` entries for soco's deleted runner tests (`gate
-times` after a green gate); then slice 3, then agents on Sprites (step 5).
+Open: Node segfaults in about one soco static part in ten on the gate
+Sprites (vitest's workers as tinypool's `write EPIPE` or "Worker exited
+unexpectedly", plain node scripts, `npm run`), on every gate Sprite and
+CPU model but never in 37 runs of the same checks on soco-dev-1; same
+binary, glibc and kernel settings everywhere. The runner now keeps a
+part's cores and prints their stack (`job.sh`, rig e53a55c). The first
+(soco-gate-1, 2026-10-29) is a `ret` just after a `read()` syscall to a
+return address whose high half holds stale `/proc/meminfo` text from an
+earlier stack buffer: a write the Sprite's memory lost, not a Node or
+test bug. That is Fly's to fix (a report is Billy's call); meanwhile
+`Gate.Engine.crashed?/1` spends the gate's one spare on it, so slice 3's
+leases should let a crashed part rerun on any Sprite that has finished.
+
+Next, slice 3 (the one image, golden checkpoints, the shared pool,
+rigd's `Fleet`), as planned for Billy:
+
+1. One provision script in rig (`gate/image/`): the apt union of both
+   projects' packages, mise for each project's `.tool-versions` (Erlang,
+   Elixir, Node, Swift), Postgres 17 with pgvector. The stamp is its hash
+   plus every project's pins. A Sprite cannot be created from another's
+   checkpoint (`sprite create` takes no source), so "golden" means each
+   Sprite's own checkpoint after a green provision gate of every project.
+2. A pool of `rig-gate-N` Sprites that any project's part leases from
+   rigd's `Fleet` (one process per Sprite, a warm minimum, leases instead
+   of the per-project pool lock); a part that fails its Sprite restores
+   that Sprite's golden checkpoint, and a Sprite that keeps failing is
+   retired.
+3. Projects move one at a time (`.gate.json` names the shared pool);
+   their own pools are destroyed once each gates green on it.
+
+Then agents on Sprites (step 5).
