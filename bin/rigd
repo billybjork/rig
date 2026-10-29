@@ -4,6 +4,7 @@
 #
 #   rigd install     build the release, install the LaunchAgent, (re)start it
 #   rigd status      what it sees: what runs, presence, keep-awake
+#   rigd fleet       the shared gate pool: each Sprite's state, the stamps
 #   rigd log         follow its log
 #   rigd restart     restart it under launchd
 #   rigd sudoers     install the pmset rule lid-closed keep-awake needs (asks for a password)
@@ -36,6 +37,33 @@ main() {
         "agents:    \(.activity.agents | join("\n           "))",
         "presence:  \(if .presence.away then "away" else "present" end); lid \(if .presence.lid_closed then "closed" else "open" end); battery \(.presence.battery)%\(if .presence.ac then " on AC" else "" end); thermal \(if .presence.thermal_ok then "ok" else "pressure" end)",
         "awake:     \(if .awake.holding then "holding" else "not holding" end); disablesleep \(if .awake.sleep_disabled then "set" else "clear" end) (\(.awake.why))"' "$status"
+      ;;
+    fleet)
+      # Fleet's socket answers one JSON line per message (gate/FLEET.md).
+      python3 - <<'PY'
+import json, os, socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(30)
+try:
+    s.connect(os.path.expanduser("~/Library/Caches/rigd/fleet.sock"))
+except OSError as e:
+    sys.exit(f"rigd: Fleet does not answer ({e})")
+s.sendall(b'{"status": {}}\n')
+b = b""
+while not b.endswith(b"\n"):
+    c = s.recv(65536)
+    if not c:
+        break
+    b += c
+d = json.loads(b)
+print("stamps:  " + "  ".join(f"{p} {v}" for p, v in sorted(d["stamps"].items())))
+print(f"waiting: {d['waiting']}")
+for name, v in sorted(d["sprites"].items(), key=lambda kv: int(kv[0].rsplit("-", 1)[1])):
+    extra = [f"strikes {v['strikes']}"] if v["strikes"] else []
+    extra += [v["why"]] if v["why"] else []
+    extra += [f"served {' '.join(v['served'])}"] if v["served"] else []
+    print(f"{name:12} {v['status']:13} {'; '.join(extra)}".rstrip())
+PY
       ;;
     log) tail -n 40 -f "$HOME/Library/Logs/rigd.log" ;;
     restart) launchctl kickstart -k "$domain/$label" ;;

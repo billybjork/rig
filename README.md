@@ -40,8 +40,9 @@ be copied between repositories lives here.
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
   has a background shell. `Fleet` keeps the shared pool of gate Sprites
   that `gate/fleet.json` names golden and leases them to gates on a Unix
-  socket (`gate/FLEET.md`). `bin/rigd status` shows what it sees; the
-  decisions are tested (`mix check` in `rigd/`).
+  socket (`gate/FLEET.md`). `bin/rigd status` shows what it sees and
+  `bin/rigd fleet` the pool; the decisions are tested (`mix check` in
+  `rigd/`).
 - `shipyard/` is the ship worker (Elixir; its own `README.md`), moved in
   from github.com/billybjork/shipyard (archived) with its history. Each
   project's ship command runs `~/dev/rig/shipyard/bin/shipyard`; a worker

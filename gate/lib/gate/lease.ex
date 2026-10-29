@@ -21,7 +21,7 @@ defmodule Gate.Lease do
 
       {:error, why} ->
         raise Gate.Error,
-              "rigd's Fleet does not answer on #{socket()} (#{inspect(why)}): bin/rigd status"
+              "rigd's Fleet does not answer on #{socket()} (#{inspect(why)}): bin/rigd status, bin/rigd fleet"
     end
   end
 

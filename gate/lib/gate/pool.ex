@@ -22,7 +22,7 @@ defmodule Gate.Pool do
     do:
       raise(
         Gate.Error,
-        "this project gates on the shared pool, which rigd's Fleet keeps (bin/rigd status; rig's gate/FLEET.md)"
+        "this project gates on the shared pool, which rigd's Fleet keeps (bin/rigd fleet; rig's gate/FLEET.md)"
       )
 
   def main(config, ["status"]), do: status(config)
