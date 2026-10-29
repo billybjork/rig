@@ -118,4 +118,47 @@ defmodule Gate.CommandsTest do
     assert System.monotonic_time(:millisecond) - t0 < 5000
     assert {_, 3} = System.cmd(deadline, ["5", "sh", "-c", "exit 3"])
   end
+
+  test "golden: the check tier's parts in turn on one Sprite, a part its Sprite failed run there once more; the stamp on stdout",
+       env do
+    Fake.parts(env.top, [{"one", "bash cmd.sh green"}, {"two", "bash cmd.sh restart-once"}])
+    Fake.git(env.top, ["add", "."])
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "parts"])
+    config = Fake.config(env.top)
+    {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "gate-2") end)
+    assert status == 0, err
+    sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
+    assert out == Gate.Stamp.stamp(config, sha) <> "\n"
+    assert err =~ "one: green"
+    assert err =~ "two: sprite_failed"
+    assert err =~ "two: green"
+    refute File.exists?(Path.join(env.root, "gate-1/home/parts"))
+
+    Fake.parts(env.top, [{"one", "bash cmd.sh red"}, {"two", "bash cmd.sh green"}])
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "red"])
+    {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "gate-2") end)
+    assert {status, out} == {1, ""}
+    refute err =~ "two:"
+  end
+
+  test "stamp <rev>: the stamp as that commit's .gate.json names it", env do
+    config = Fake.config(env.top)
+    sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
+    old = Gate.Stamp.stamp(config, sha)
+
+    File.write!(
+      Path.join(env.top, ".gate.json"),
+      File.read!(Path.join(env.top, ".gate.json"))
+      |> String.replace(
+        ~s("stamp":[".tool-versions","provision.sh"]),
+        ~s("stamp":[".tool-versions"])
+      )
+    )
+
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "stamp"])
+    assert Gate.Stamp.stamp(Gate.Config.load(env.top, sha), sha) == old
+    new = Gate.Config.load(env.top, "HEAD")
+    assert new.stamp == [".tool-versions"]
+    refute Gate.Stamp.stamp(new, "HEAD") == old
+  end
 end

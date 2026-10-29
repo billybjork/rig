@@ -72,6 +72,18 @@ defmodule Gate.Config do
         {:error, _} -> raise Gate.Error, "#{path} is missing: this checkout has no Sprite gate"
       end
 
+    from_json(top, json, path)
+  end
+
+  @doc "The `.gate.json` committed at `rev` (`gate stamp <rev>`, which rigd's `Fleet` reads)."
+  def load(top, rev) do
+    case System.cmd("git", ["show", "#{rev}:.gate.json"], cd: top, stderr_to_stdout: true) do
+      {text, 0} -> from_json(top, JSON.decode!(text), "#{rev}:.gate.json")
+      {out, _} -> raise Gate.Error, "#{rev}:.gate.json: #{String.trim(out)}"
+    end
+  end
+
+  defp from_json(top, json, path) do
     %__MODULE__{
       top: top,
       name: fetch!(json, "name", path),

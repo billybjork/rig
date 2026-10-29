@@ -73,7 +73,8 @@ process groups on that Sprite before it leases it again (today's TERM trap
 in `bin/gate`, moved to where it cannot be skipped). `prefer` names the
 Sprites that already hold the project's tree at a recent commit, so the
 git bundle stays small and the build caches warm; `Fleet` grants one of
-them when it is idle and any idle Sprite otherwise.
+them when it is idle, else one that served the project since its last
+restore, else any idle Sprite.
 
 `result`: `green` or `red` returns the Sprite idle. `failed` (the Sprite
 failed the part) and `crashed` (a native crash) restore its golden

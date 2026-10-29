@@ -1,0 +1,4 @@
+{
+  "sprites": ["rig-gate-1"],
+  "projects": ["~/dev/soco", "~/dev/heaters"]
+}

@@ -14,8 +14,9 @@ one-line wrappers around `bin/gate`.
 gate check [tier]            # the split gate on HEAD, on the project's pool
 gate run <command...>        # a command on the working tree, on a dev Sprite
 gate pool status|provision <s>|rebuild <s>|exec <s> <cmd...>|warm [s...]
+gate golden <sprite>         # the check tier's parts in turn on one Sprite (rigd's Fleet)
 gate times                   # rewrite the suite's partition weights
-gate stamp                   # HEAD's provision stamp
+gate stamp [rev]             # HEAD's (or rev's) provision stamp
 gate self-check              # this runner's gate (compile, format, 24 tests)
 ```
 
@@ -83,6 +84,14 @@ while warming relaunches the part on the same Sprite instead, where the
 half-built cache is. A keeper that dies is relaunched. A gate stopped
 from outside (a closed terminal, the worker's alarm, passed on by the lock)
 ends the parts it launched.
+
+## The shared pool
+
+rigd's `Fleet` (`rigd/lib/rigd/fleet.ex`, the plan in `FLEET.md`) keeps
+the Sprites `fleet.json` names golden: each project's provision gate,
+`gate golden <sprite>` from a detached worktree of its `origin/main`,
+then a checkpoint whose comment names every project's stamp (`gate stamp
+origin/main`). Gates lease its Sprites on `~/Library/Caches/rigd/fleet.sock`.
 
 ## The contract
 

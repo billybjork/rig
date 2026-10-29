@@ -38,7 +38,9 @@ be copied between repositories lives here.
   one ntfy push per agent that finishes (or waits on Billy) while he is
   away, on `NTFY_TOPIC` from `rigd/fnox.toml` (deploy tier, key
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
-  has a background shell. `bin/rigd status` shows what it sees; the
+  has a background shell. `Fleet` keeps the shared pool of gate Sprites
+  that `gate/fleet.json` names golden and leases them to gates on a Unix
+  socket (`gate/FLEET.md`). `bin/rigd status` shows what it sees; the
   decisions are tested (`mix check` in `rigd/`).
 - `shipyard/` is the ship worker (Elixir; its own `README.md`), moved in
   from github.com/billybjork/shipyard (archived) with its history. Each

@@ -6,7 +6,8 @@
   release and (re)loads this. Log: ~/Library/Logs/rigd.log.
 
   launchd starts it with a bare PATH, so the plist names where rex (inside
-  Rex Server.app), fnox and bws (Homebrew) live; ioreg and pmset are in the
+  Rex Server.app), fnox and bws (Homebrew) live, and the asdf shims for the
+  gate runner its Fleet calls (gate/bin/gate); ioreg and pmset are in the
   system directories.
 -->
 <plist version="1.0">
@@ -21,7 +22,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/billy/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/billy/.asdf/shims:/Users/billy/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
