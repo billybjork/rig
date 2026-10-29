@@ -63,11 +63,18 @@ defmodule Rigd.Fleet.Golden do
   end
 
   # `gate` under a deadline, in `dir`, stdout and stderr together, without
-  # the release's boot variables: a child `erl` that sees rigd's
-  # ROOTDIR or BINDIR boots rigd's release instead of its own.
+  # the release's boot variables or its erts on PATH: a child `erl` that
+  # finds either boots rigd's release instead of its own.
   @doc false
   def cmd(gate, args, dir, secs) do
     deadline = Path.join(Path.dirname(Path.dirname(gate)), "libexec/deadline")
+    root = to_string(:code.root_dir())
+
+    path =
+      System.get_env("PATH", "")
+      |> String.split(":")
+      |> Enum.reject(&String.starts_with?(&1, root))
+      |> Enum.join(":")
 
     env =
       for {k, _} <- System.get_env(),
@@ -76,7 +83,7 @@ defmodule Rigd.Fleet.Golden do
 
     System.cmd(deadline, [to_string(secs), gate | args],
       cd: dir,
-      env: env,
+      env: [{"PATH", path} | env],
       stderr_to_stdout: true
     )
   end

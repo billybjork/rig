@@ -274,14 +274,28 @@ defmodule Rigd.FleetTest do
       Path.join([tmp, "gate", "libexec", "deadline"])
     )
 
-    File.write!(gate, "#!/bin/bash\necho \"${ROOTDIR:-none} ${RELEASE_ROOT:-none} $PWD\"\n")
+    File.write!(
+      gate,
+      "#!/bin/bash\necho \"${ROOTDIR:-none} ${RELEASE_ROOT:-none} $PWD\"\necho \"$PATH\"\n"
+    )
+
     File.chmod!(gate, 0o755)
 
-    System.put_env(%{"ROOTDIR" => "/rel", "RELEASE_ROOT" => "/rel"})
-    on_exit(fn -> Enum.each(~w(ROOTDIR RELEASE_ROOT), &System.delete_env/1) end)
+    # The release's erts/bin leads PATH inside a release.
+    erts = Path.join(to_string(:code.root_dir()), "erts/bin")
+    path = System.get_env("PATH")
+    System.put_env(%{"ROOTDIR" => "/rel", "RELEASE_ROOT" => "/rel", "PATH" => "#{erts}:#{path}"})
 
-    assert {"none none " <> dir, 0} = Rigd.Fleet.Golden.cmd(gate, [], tmp, 10)
-    assert String.trim(dir) == Path.expand(tmp)
+    on_exit(fn ->
+      Enum.each(~w(ROOTDIR RELEASE_ROOT), &System.delete_env/1)
+      System.put_env("PATH", path)
+    end)
+
+    assert {"none none " <> out, 0} = Rigd.Fleet.Golden.cmd(gate, [], tmp, 10)
+    [dir, child_path] = String.split(out, "\n", trim: true)
+    assert dir == Path.expand(tmp)
+    refute child_path =~ erts
+    assert child_path =~ "/usr/bin"
   end
 
   test "the nightly restore is at the next 04:00" do
