@@ -120,44 +120,51 @@ still carry unshipped commits whose ship scripts call it (Billy decides
 when it goes).
 
 Step 3's slice 2, done: `gate/` (its README) is the shared runner, parts
-detached on their Sprites (22 tests, `gate/bin/gate self-check`); the
-worker exports `RIG`, its clone of rig, and reads the queue through
-GraphQL. soco (#376) and heaters (#544) gate on it. Its follow-ups are
-live: soco #381 pins the claim fixtures' week shift once per run (a run
-across UTC midnight on a week boundary moved them mid-test); #384
-reweighs the suite's partitions; #385 and heaters #548 fix the
-`provision.sh` headers (each pool re-stamped once), and #385 installs gdb.
-After the re-stamp only soco-gate-4 is checkpointed (v17); soco-gate-1
-crashed, then lost a part's directory, in its two provision gates.
+detached on their Sprites (`gate/bin/gate self-check`); the worker exports
+`RIG`, its clone of rig, and reads the queue through GraphQL. soco (#376)
+and heaters (#544) gate on it, with its follow-ups live (soco #381, #384,
+#385; heaters #548; rig e53a55c keeps a part's cores and prints their
+stack).
 
-Open: Node segfaults in about one soco static part in ten on the gate
-Sprites (vitest's workers as tinypool's `write EPIPE` or "Worker exited
-unexpectedly", plain node scripts, `npm run`), on every gate Sprite and
-CPU model but never in 37 runs of the same checks on soco-dev-1; same
-binary, glibc and kernel settings everywhere. The runner now keeps a
-part's cores and prints their stack (`job.sh`, rig e53a55c). The first
-(soco-gate-1, 2026-10-29) is a `ret` just after a `read()` syscall to a
-return address whose high half holds stale `/proc/meminfo` text from an
-earlier stack buffer: a write the Sprite's memory lost, not a Node or
-test bug. That is Fly's to fix (a report is Billy's call); meanwhile
-`Gate.Engine.crashed?/1` spends the gate's one spare on it, so slice 3's
-leases should let a crashed part rerun on any Sprite that has finished.
+Node segfaults in about one soco static part in ten on the gate Sprites,
+never on soco-dev-1. The first core (soco-gate-1, 2026-10-29) is a `ret`
+to a return address holding stale `/proc/meminfo` text: a write the
+Sprite's memory lost, Fly's to fix (a report is Billy's call). Billy: the
+Sprites are disposable, so a bad one is rebuilt, not investigated, and the
+runner makes one cost a rerun.
 
-Next, slice 3 (the one image, golden checkpoints, the shared pool,
-rigd's `Fleet`), as planned for Billy:
+Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
 
-1. One provision script in rig (`gate/image/`): the apt union of both
-   projects' packages, mise for each project's `.tool-versions` (Erlang,
-   Elixir, Node, Swift), Postgres 17 with pgvector. The stamp is its hash
-   plus every project's pins. A Sprite cannot be created from another's
-   checkpoint (`sprite create` takes no source), so "golden" means each
-   Sprite's own checkpoint after a green provision gate of every project.
-2. A pool of `rig-gate-N` Sprites that any project's part leases from
-   rigd's `Fleet` (one process per Sprite, a warm minimum, leases instead
-   of the per-project pool lock); a part that fails its Sprite restores
-   that Sprite's golden checkpoint, and a Sprite that keeps failing is
-   retired.
-3. Projects move one at a time (`.gate.json` names the shared pool);
-   their own pools are destroyed once each gates green on it.
+- On main: a part whose Sprite failed or crashed reruns on the spare or,
+  once that is taken, on the first Sprite whose own part ends green or red
+  (`Gate.Engine`; 25 tests). One image for every project,
+  `gate/image/provision.sh`: a `.gate.json` naming `image` (its pin files)
+  instead of `stamp` and `provision` gets the apt union, Postgres 17 with
+  pgvector and pg_jsonschema, Swift, just and uv, and its own Erlang,
+  Elixir and Node from its `.tool-versions` side by side under
+  `/opt/gate`. No mise: it would fetch the same builds, and adds a tool.
+- The trial Sprite `rig-gate-1` holds both: soco's provision gate green
+  (checkpoint v2, after one restart) and heaters' green (v3, its golden
+  checkpoint). The trial branches that pointed each project at it are
+  gone; their `.gate.json` was the pool `["rig-gate-1"]` and `image`
+  (soco: `.tool-versions`, `tooling/runtime-versions.env`; heaters:
+  `.tool-versions`) with locks under `~/.cache/rig-gate-trial`.
+- soco's pool, stamp 1dfcf3bc7942735c: soco-gate-1 (rebuilt, v2), -3
+  (rebuilt, v2), -4 (v17), -5 (v144) and -6 (v28) are ready. soco-gate-2
+  is stamped but has no checkpoint: its provision gate lost the Sprite
+  twice, and so did the rebuilt one's (a restart, then 180 s unreachable),
+  so it gates but cannot be restored; its next rebuild is `Fleet`'s or a
+  quiet hour's. Long provision gates are where Sprites fail: of the 15 run
+  2026-10-29, 9 lost their Sprite 7 to 26 min into `mix precommit.ci`,
+  so `Fleet`'s provision gate runs a project's parts in turn instead.
+
+Next (`gate/FLEET.md`, "Order"): each project moves to the image on its
+own pool (a PR putting `image` in `.gate.json` and dropping its
+`provision.sh`); then rigd's `Fleet` (`Fleet.CLI` running every
+lifecycle `sprite` call, one process per Sprite, leases over a socket,
+golden checkpoints restored on a failure, three strikes retire a Sprite);
+then `Gate.Engine` on leases with `"pool": "fleet"`; then the pool built
+to its size (Billy's call), soco moved, heaters moved, the old pools
+destroyed.
 
 Then agents on Sprites (step 5).

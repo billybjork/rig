@@ -29,7 +29,15 @@ taught; nothing here runs yet.
 
 `sprite create` takes no source, so a checkpoint cannot seed another
 Sprite. "Golden" is each Sprite's own checkpoint, taken after every
-project's provision gate passed on it under the current stamps. Its comment
+project's provision gate passed on it under the current stamps.
+
+A provision gate today is one long part (soco's `mix precommit.ci`, about
+25 min after the PLT), and that is where the Sprites fail: on 2026-10-29
+9 of 15 such runs (soco's pool and rig-gate-1) lost their Sprite 7 to
+26 min in, a restart or 180 s unreachable, with memory to spare, while the same checks split into parts of 5 to 8 min gate daily.
+So `Fleet`'s provision gate runs the project's gate parts one after
+another on the Sprite, each short and each relaunched once after a
+restart, rather than one command. Its comment
 names each project's stamp (`golden soco 13545dd5 heaters 7d1c…`), so
 `Fleet` can tell a current one from a stale one.
 
