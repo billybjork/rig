@@ -143,26 +143,22 @@ Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
   pgvector and pg_jsonschema, Swift, just and uv, and its own Erlang,
   Elixir and Node from its `.tool-versions` side by side under
   `/opt/gate`. No mise: it would fetch the same builds, and adds a tool.
-- The trial Sprite `rig-gate-1` holds both: soco's provision gate green
-  (checkpoint v2, after one restart) and heaters' green (v3, its golden
-  checkpoint). The trial branches that pointed each project at it are
-  gone; their `.gate.json` was the pool `["rig-gate-1"]` and `image`
-  (soco: `.tool-versions`, `tooling/runtime-versions.env`; heaters:
-  `.tool-versions`) with locks under `~/.cache/rig-gate-trial`.
-- soco's pool, stamp 1dfcf3bc7942735c: soco-gate-1 (rebuilt, v2), -3
-  (rebuilt, v2), -4 (v17), -5 (v144) and -6 (v28) are ready. soco-gate-2
-  is stamped but has no checkpoint: its provision gate lost the Sprite
-  twice, and so did the rebuilt one's (a restart, then 180 s unreachable),
-  so it gates but cannot be restored; its next rebuild is `Fleet`'s or a
-  quiet hour's. Long provision gates are where Sprites fail: of the 15 run
-  2026-10-29, 9 lost their Sprite 7 to 26 min into `mix precommit.ci`,
-  so `Fleet`'s provision gate runs a project's parts in turn instead.
-
-Billy approved the plan (2026-10-29): a shared pool of 10 Sprites,
-`rig-gate-1` to `-10`, and each project's own pool destroyed once it gates
-green on the shared one. Next, in the order of `gate/FLEET.md`, "Order":
-each project onto the image on its own pool; rigd's `Fleet`; `Gate.Engine`
-on leases; the pool built; soco, then heaters, moved; their pools
-destroyed.
+- Each project gates on the image on its own pool: soco #386
+  (`e70482f0`), heaters #557 (`9f02fe4d`).
+- rigd's `Fleet` runs (`rigd/lib/rigd/fleet*`, `gate golden`, `gate
+  stamp <rev>`; socket `~/Library/Caches/rigd/fleet.sock`, logs
+  `~/Library/Logs/rigd.log` and `~/Library/Logs/rigd-fleet/`), and
+  `Gate.Engine` leases from it for a project whose `.gate.json` says
+  `"pool": "fleet"` (`gate/lib/gate/lease.ex`). The pool is `rig-gate-1`
+  to `-10` (`gate/fleet.json`); all ten were provisioning from
+  2026-10-29 11:10, each running soco's provision gate and then heaters',
+  one part at a time. A restart of rigd (`bin/rigd install`) kills the
+  provision gates under way, and they start over.
+- Billy approved (2026-10-29): a shared pool of 10 Sprites, and each
+  project's own pool destroyed after three green ships in a row on the
+  shared one. Next: once the pool is golden, soco moves to `"pool":
+  "fleet"` through its ship, three green ships, then soco-gate-1..6 are
+  destroyed; then heaters the same way (heaters-gate-1..5). The dev
+  Sprites stay.
 
 Then agents on Sprites (step 5).
