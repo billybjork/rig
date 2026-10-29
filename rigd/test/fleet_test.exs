@@ -298,6 +298,38 @@ defmodule Rigd.FleetTest do
     assert child_path =~ "/usr/bin"
   end
 
+  @tag :tmp_dir
+  test "a golden run first removes the worktrees a killed one left on its Sprite", %{
+    tmp_dir: tmp
+  } do
+    repo = Path.join(tmp, "repo")
+    git = fn args -> {_, 0} = System.cmd("git", ["-C", repo | args], stderr_to_stdout: true) end
+    File.mkdir_p!(repo)
+    git.(["init", "-q"])
+
+    git.([
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "x"
+    ])
+
+    left = Path.join(tmp, "rigd-golden-rig-gate-1-7")
+    other = Path.join(tmp, "rigd-golden-rig-gate-10-8")
+    for path <- [left, other], do: git.(["worktree", "add", "-q", "--detach", path])
+
+    assert :ok = Rigd.Fleet.Golden.prune(repo, "rig-gate-1")
+    refute File.exists?(left)
+    assert File.exists?(other)
+    {list, 0} = System.cmd("git", ["-C", repo, "worktree", "list"])
+    refute list =~ "rig-gate-1-7"
+  end
+
   test "the nightly restore is at the next 04:00" do
     assert Fleet.until_nightly(~N[2026-10-29 03:00:00]) == 3600 * 1000
     assert Fleet.until_nightly(~N[2026-10-29 04:00:00]) == 24 * 3600 * 1000

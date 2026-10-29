@@ -32,6 +32,7 @@ defmodule Rigd.Fleet.Golden do
 
     with :ok <- fetch(dir),
          {:ok, json} <- git(dir, ["show", "origin/main:.gate.json"]),
+         :ok <- prune(dir, sprite),
          {:ok, _} <- git(dir, ["worktree", "add", "-q", "--detach", tmp, "origin/main"]) do
       name = JSON.decode!(json)["name"]
       log = log_path(sprite, name)
@@ -45,6 +46,19 @@ defmodule Rigd.Fleet.Golden do
         1 -> {:red, "#{name}'s provision gate went red on main (#{log})"}
         _ -> {:sprite_failed, "#{name}'s provision gate: exit #{status} (#{log})"}
       end
+    end
+  end
+
+  # The worktrees an earlier run on `sprite` left when rigd was killed
+  # under it: none runs now, since a Sprite provisions one project at a time.
+  @doc false
+  def prune(dir, sprite) do
+    with {:ok, list} <- git(dir, ["worktree", "list", "--porcelain"]) do
+      for "worktree " <> path <- String.split(list, "\n"),
+          String.starts_with?(Path.basename(path), "rigd-golden-#{sprite}-"),
+          do: git(dir, ["worktree", "remove", "--force", path])
+
+      with {:ok, _} <- git(dir, ["worktree", "prune"]), do: :ok
     end
   end
 
