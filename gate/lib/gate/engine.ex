@@ -135,7 +135,8 @@ defmodule Gate.Engine do
     end
   end
 
-  # The part's tar: the Sprite-side job and keeper, its vars and argv, the
+  # The part's tar: the Sprite-side job and keeper (and rig's image script
+  # for a project that uses it), its vars and argv, the
   # bundle that brings this Sprite to the commit, and `gate run`'s overlay.
   defp pack(ctx, part) do
     dir = Path.join(ctx.work, part.id)
@@ -144,6 +145,8 @@ defmodule Gate.Engine do
 
     for file <- ["job.sh", "launch.sh"],
         do: File.cp!(Path.join(Sprite.root(), "sprite/#{file}"), Path.join(dir, file))
+
+    if ctx.config.image, do: File.cp!(Gate.Stamp.image(), Path.join(dir, "image.sh"))
 
     File.write!(Path.join(dir, "vars"), vars(ctx, part.job))
     File.write!(Path.join(dir, "argv"), Enum.map(part.job.argv, &[&1, 0]))

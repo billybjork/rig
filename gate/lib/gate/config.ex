@@ -15,6 +15,10 @@ defmodule Gate.Config do
     * `stamp`: the files whose hash is the provision stamp, in order.
       `provision`: the provision script and its arguments, run on the
       Sprite from the checkout as `bash <script> <stamp> <args...>`.
+    * `image`: instead of `stamp` and `provision`, the project's pin files
+      (its `.tool-versions` first) for rig's one gate image
+      (`image/provision.sh`), which every project on the shared pool uses;
+      the stamp is then the hash of those files and the image script.
     * `setup`: the script that readies a checked-out tree before each part
       (databases, deps, Node trees).
     * `keep`: the paths `git clean` keeps between parts (build caches).
@@ -29,7 +33,7 @@ defmodule Gate.Config do
       and the launch (`launch`), and between polls (`poll`).
   """
 
-  @enforce_keys [:top, :name, :pool, :logs, :locks, :parts, :stamp, :provision, :setup]
+  @enforce_keys [:top, :name, :pool, :logs, :locks, :parts, :setup]
   defstruct [
     :top,
     :name,
@@ -39,6 +43,7 @@ defmodule Gate.Config do
     :parts,
     :stamp,
     :provision,
+    :image,
     :setup,
     :weights,
     dev: [],
@@ -75,8 +80,10 @@ defmodule Gate.Config do
       logs: json |> fetch!("logs", path) |> Path.expand(),
       locks: json |> fetch!("locks", path) |> Path.expand(),
       parts: fetch!(json, "parts", path),
-      stamp: fetch!(json, "stamp", path),
-      provision: fetch!(json, "provision", path),
+      image: Map.get(json, "image"),
+      stamp: if(json["image"], do: json["image"], else: fetch!(json, "stamp", path)),
+      provision:
+        if(json["image"], do: ["@image" | json["image"]], else: fetch!(json, "provision", path)),
       setup: fetch!(json, "setup", path),
       keep: Map.get(json, "keep", []),
       warm: Map.get(json, "warm", []),

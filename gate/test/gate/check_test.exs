@@ -231,6 +231,34 @@ defmodule Gate.CheckTest do
     assert List.last(Fake.rows(env.logs)) =~ ~r/static-1:\d+:gate-1:green\t/
   end
 
+  @tag gate: %{"image" => [".tool-versions"], "stamp" => nil, "provision" => nil}
+  test "a project on the image: rig's image script provisions it, and the stamp covers that script",
+       env do
+    image = Path.join(env.tmp, "image.sh")
+
+    File.write!(image, ~S"""
+    echo "image for $2 from $3"
+    echo "$1" >~/"$2-stamp"
+    """)
+
+    System.put_env("GATE_IMAGE", image)
+    on_exit(fn -> System.delete_env("GATE_IMAGE") end)
+
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    log = log(env, "gate-1", "static")
+    assert log =~ ~r"image for proj from \S+/proj/\.tool-versions"
+
+    want =
+      :crypto.hash(:sha256, [File.read!(Path.join(env.top, ".tool-versions")), File.read!(image)])
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 16)
+
+    assert File.read!(Path.join(env.root, "gate-1/home/proj-stamp")) == want <> "\n"
+  end
+
   test "the stamp is the hash of the stamp files at the commit, in order, as the old pools' was",
        env do
     expected =

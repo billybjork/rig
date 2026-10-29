@@ -89,6 +89,7 @@ defmodule Gate.Fake do
         },
         config
       )
+      |> Map.reject(fn {_, value} -> value == nil end)
 
     files = %{
       ".gate.json" => JSON.encode!(gate),

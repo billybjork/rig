@@ -2,7 +2,8 @@
 # On a Sprite: one part's run, `bash ~/parts/<id>/job.sh <id>`, started by
 # launch.sh in a session of its own, with its output in ~/parts/<id>/log.
 # ~/parts/<id>/vars names the project (NAME), the commit (SHA), the
-# provision stamp it wants (STAMP), the provision command (PROVISION), the
+# provision stamp it wants (STAMP), the provision command (PROVISION; with
+# `@image` first, rig's image script, staged as ~/parts/<id>/image.sh), the
 # project's setup script (SETUP), the build caches `git clean` keeps (KEEP),
 # and the caches to warm first (WARM_NAMES, WARM_KEYS, WARM_CMDS); argv
 # holds the command, NUL-separated.
@@ -87,7 +88,11 @@ if [ "$have" != "$STAMP" ]; then
   # Absolute paths: a provision script may cd (to /tmp, to download).
   provision=()
   for path in "${PROVISION[@]}"; do provision+=("$repo/$path"); done
-  bash "${provision[0]}" "$STAMP" "${provision[@]:1}" || { say "tool refresh failed"; finish 89; }
+  if [ "${PROVISION[0]}" = @image ]; then
+    bash "$d/image.sh" "$STAMP" "$NAME" "${provision[@]:1}" || { say "tool refresh failed"; finish 89; }
+  else
+    bash "${provision[0]}" "$STAMP" "${provision[@]:1}" || { say "tool refresh failed"; finish 89; }
+  fi
   [ "$(cat ~/"$NAME-stamp" 2>/dev/null)" = "$STAMP" ] || { say "tool refresh did not stamp the Sprite"; finish 89; }
   lap "tools refreshed"
 fi
@@ -101,8 +106,12 @@ rm -rf /tmp/mix_lock_*
 # A Sprite that dies while Mix compiles leaves .beam files its manifest
 # calls current but that carry no debug info, and the next Dialyzer fails on
 # them ("Could not get Core Erlang code"). The marker outlives only a part
-# that never finished, and then the app's build (not the deps') goes.
-if [ -e ~/gate-unfinished ]; then
+# that never finished, and then the app's build (not the deps') goes. The
+# marker and the warm keys are the project's (several share an image
+# Sprite); a Sprite that ran one project before keeps its unnamed ones.
+unfinished=~/gate-unfinished-$NAME
+[ ! -e ~/gate-unfinished ] || mv ~/gate-unfinished "$unfinished"
+if [ -e "$unfinished" ]; then
   say "the last part here did not finish; dropping the app's build"
   rm -rf "$repo"/_build/*/lib/"$NAME"
 fi
@@ -119,21 +128,23 @@ if [ ${#WARM_NAMES[@]} -gt 0 ]; then
   mkdir -p ~/.gate-warm
   for i in "${!WARM_NAMES[@]}"; do
     name=${WARM_NAMES[i]} key=${WARM_KEYS[i]}
-    [ "$(cat ~/.gate-warm/"$name" 2>/dev/null)" != "$key" ] || continue
+    keyfile=~/.gate-warm/$NAME-$name
+    [ ! -e ~/.gate-warm/"$name" ] || mv ~/.gate-warm/"$name" "$keyfile"
+    [ "$(cat "$keyfile" 2>/dev/null)" != "$key" ] || continue
     say "warming $name (key $key)"
-    touch ~/gate-unfinished
+    touch "$unfinished"
     if bash -c "${WARM_CMDS[i]}" || { say "warming $name failed; once more" && bash -c "${WARM_CMDS[i]}"; }; then
-      echo "$key" >~/.gate-warm/"$name"
+      echo "$key" >"$keyfile"
       lap "warmed $name"
     else
       lap "warming $name failed; the command will say why"
     fi
-    rm -f ~/gate-unfinished
+    rm -f "$unfinished"
   done
 fi
 
 phase run
-touch ~/gate-unfinished
+touch "$unfinished"
 # A native crash keeps its core, so a part's SIGSEGV can be read rather
 # than guessed at: Node died at startup in about one soco static part in
 # ten on the gate Sprites (2026-10), never on the dev Sprite, and each
@@ -162,7 +173,7 @@ done
 ls -t "$cores"/core.* 2>/dev/null | tail -n +4 | while IFS= read -r old; do rm -f "$old"; done
 # A command killed by a signal (a Bus error as the Sprite fails) may have
 # been compiling, so its marker stays.
-[ "$rc" -ge 128 ] || rm -f ~/gate-unfinished
+[ "$rc" -ge 128 ] || rm -f "$unfinished"
 # A suite part names its test files; the lap keeps the command before them.
 command="${cmd[*]}"
 lap "${command%% test/*}"
