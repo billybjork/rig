@@ -1,2 +1,3 @@
 _build/
 tmp/
+erl_crash.dump
