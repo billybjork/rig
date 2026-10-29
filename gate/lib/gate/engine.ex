@@ -9,17 +9,22 @@ defmodule Gate.Engine do
   A part ends one of three ways:
 
     * it ran: its job wrote a status in the `run` phase, green on 0 and
-      red otherwise, except a native crash (`crashed?/1`), which reruns on
-      the spare while it is free;
+      red otherwise, except a native crash (`crashed?/1`), which reruns;
     * its Sprite failed: the upload or launch failed, a phase outlasted its
       limit (it is then ended on the Sprite), the Sprite's life changed
       (it restarted), the job ended in setup or without a status, or no
-      poll got through for `limits.unreachable` seconds. It reruns once on
-      the spare when there is one and it is free; otherwise it is
-      `:sprite_failed`;
+      poll got through for `limits.unreachable` seconds. It reruns;
     * a restart during the `warm` phase relaunches it once on the same
       Sprite instead: a cold dialyzer PLT build runs the Sprite out of
       memory at about 15 min, and the retry finishes from what it left.
+
+  A part reruns once, on a free Sprite: the spare while no part has taken
+  it, then any Sprite whose own part has ended green or red (a Sprite that
+  failed or crashed is never free again in this run). With none free it
+  waits for one; when every other part has ended and none is free, it is
+  `:sprite_failed`. A Sprite's memory loses a write now and then (Node's
+  segfaults on soco's gate Sprites, 2026-10), so one bad Sprite costs a
+  rerun, not the gate.
 
   A dropped keeper (the TTY session that keeps the Sprite awake) is
   relaunched while its job runs.
@@ -56,7 +61,7 @@ defmodule Gate.Engine do
   def run(%__MODULE__{} = ctx, assigned) do
     File.mkdir_p!(ctx.config.logs)
     File.mkdir_p!(ctx.work)
-    state = %{parts: %{}, spare_free: ctx.spare != nil, results: %{}}
+    state = %{parts: %{}, free: List.wrap(ctx.spare), waiting: [], results: %{}}
 
     state =
       assigned
@@ -70,17 +75,29 @@ defmodule Gate.Engine do
   end
 
   defp loop(ctx, state) do
-    if map_size(state.parts) == 0 do
-      state
-    else
-      Process.sleep(Config.limit_ms(ctx.config, "poll"))
-
-      state.parts
-      |> Map.keys()
-      |> Enum.sort()
-      |> Enum.reduce(state, &poll(ctx, &2, &1))
-      |> then(&loop(ctx, &1))
+    cond do
+      map_size(state.parts) > 0 -> loop(ctx, poll_all(ctx, state))
+      state.waiting != [] -> loop(ctx, give_up(ctx, state))
+      true -> state
     end
+  end
+
+  defp poll_all(ctx, state) do
+    Process.sleep(Config.limit_ms(ctx.config, "poll"))
+
+    state.parts
+    |> Map.keys()
+    |> Enum.sort()
+    |> Enum.reduce(state, &poll(ctx, &2, &1))
+  end
+
+  # Every other part has ended and no Sprite is free: the waiting parts
+  # have nowhere to rerun.
+  defp give_up(ctx, %{waiting: waiting} = state) do
+    Enum.reduce(waiting, %{state | waiting: []}, fn {part, rc, why}, state ->
+      ctx.say.("#{part.job.name}: no Sprite was free to rerun it")
+      done(ctx, state, part, :sprite_failed, rc, "#{why}; no Sprite was free to rerun it")
+    end)
   end
 
   defp start(ctx, state, base, sprite, message) do
@@ -284,45 +301,65 @@ defmodule Gate.Engine do
       part.phase != "run" ->
         failed(ctx, state, part, "exit #{rc} in #{part.phase}: #{last_log_line(part)}")
 
-      rc != 0 and crashed?(part.log) and state.spare_free ->
-        note(part, "a native crash, not a gate result; reran on #{ctx.spare}")
-
-        ctx.say.(
-          "#{part.job.name}: a process crashed on #{part.sprite} (log #{part.log}); rerunning on #{ctx.spare}"
-        )
-
-        rerun(ctx, state, part, "a process crashed on #{part.sprite}; rerunning on #{ctx.spare}")
+      rc != 0 and crashed?(part.log) and part.reran_from == nil ->
+        ctx.say.("#{part.job.name}: a process crashed on #{part.sprite} (log #{part.log})")
+        rerun(ctx, state, part, rc, "a native crash, not a gate result")
 
       rc != 0 and crashed?(part.log) ->
         ctx.say.(
-          "#{part.job.name}: a process crashed on #{part.sprite} and the spare is unavailable (log #{part.log})"
+          "#{part.job.name}: a process crashed on #{part.sprite}, its rerun (log #{part.log})"
         )
 
-        done(ctx, state, part, :sprite_failed, rc, "a process crashed; no spare left")
+        done(ctx, state, part, :sprite_failed, rc, "a process crashed, on its rerun too")
 
       true ->
         result = if rc == 0, do: :green, else: :red
         ctx.say.("#{part.job.name} #{result} in #{secs(part)} s on #{part.sprite}")
-        done(ctx, state, part, result, rc, nil)
+        state = done(ctx, state, part, result, rc, nil)
+        free(ctx, %{state | free: state.free ++ [part.sprite]})
     end
   end
 
   defp failed(ctx, state, part, why) do
     note(part, "#{part.sprite} failed: #{why}")
 
-    if state.spare_free and part.sprite != ctx.spare do
-      ctx.say.("#{part.job.name}: #{part.sprite} failed (#{why}); rerunning on #{ctx.spare}")
-      rerun(ctx, state, part, "#{part.sprite} failed; rerunning on #{ctx.spare}")
+    if part.reran_from == nil do
+      ctx.say.("#{part.job.name}: #{part.sprite} failed (#{why})")
+      rerun(ctx, state, part, nil, "#{part.sprite} failed")
     else
       ctx.say.("#{part.job.name}: #{part.sprite} failed: #{why}")
       done(ctx, state, part, :sprite_failed, nil, why)
     end
   end
 
-  defp rerun(ctx, state, part, message) do
-    state = %{state | parts: Map.delete(state.parts, part.i), spare_free: false}
-    start(ctx, state, %{i: part.i, job: part.job, reran_from: part.sprite}, ctx.spare, message)
+  # A part to rerun leaves the running ones and waits for a free Sprite.
+  defp rerun(ctx, state, part, rc, why) do
+    state = %{
+      state
+      | parts: Map.delete(state.parts, part.i),
+        waiting: state.waiting ++ [{part, rc, why}]
+    }
+
+    free(ctx, state)
   end
+
+  # Starts each waiting part on a free Sprite, in turn.
+  defp free(ctx, %{waiting: [{part, _rc, why} | waiting], free: [sprite | free]} = state) do
+    note(part, "#{why}; reran on #{sprite}")
+    ctx.say.("#{part.job.name}: rerunning on #{sprite}")
+    state = %{state | waiting: waiting, free: free}
+
+    ctx
+    |> start(
+      state,
+      %{i: part.i, job: part.job, reran_from: part.sprite},
+      sprite,
+      "#{why}; rerunning on #{sprite}"
+    )
+    |> then(&free(ctx, &1))
+  end
+
+  defp free(_ctx, state), do: state
 
   defp done(ctx, state, part, result, rc, why) do
     secs = secs(part)

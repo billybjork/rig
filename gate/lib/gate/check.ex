@@ -2,16 +2,16 @@ defmodule Gate.Check do
   @moduledoc """
   `gate check [tier]`: the split gate on HEAD. Its parts (the project's
   `parts` command) run at once, one Sprite each from the pool, and the
-  pool's last Sprite is the spare (`Gate.Engine` says when a part reruns
-  there). The gate is green when every part is.
+  pool's last Sprite is the spare (`Gate.Engine` says when a part reruns,
+  there or on a Sprite whose own part has ended). The gate is green when every part is.
 
   The contract the ship worker reads (rig's shipyard/README.md, "A
   project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
-  stdout, 2 no verdict (a part's Sprite failed and the spare could not
-  cover it); one row per run in `<logs>/check-remote.tsv`: when, sha,
+  stdout, 2 no verdict (a part's Sprite failed and no Sprite could rerun
+  it); one row per run in `<logs>/check-remote.tsv`: when, sha,
   tier, verdict, wall seconds, then each part as
   `name:seconds:sprite:result`, with `:reran-from-<sprite>` on a part that
-  reran on the spare. Progress goes to stderr, and each part reports to
+  reran. Progress goes to stderr, and each part reports to
   Rex's program status as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
   """
 
@@ -114,9 +114,10 @@ defmodule Gate.Check do
     end
 
     spent =
-      if Enum.any?(results, & &1.reran_from),
-        do: " (a Sprite failed; its part reran on #{spare})",
-        else: ""
+      case for(r <- results, r.reran_from, do: "#{r.name} on #{r.sprite}") do
+        [] -> ""
+        reruns -> " (reran #{Enum.join(reruns, ", ")})"
+      end
 
     case verdict do
       "green" ->
@@ -129,7 +130,7 @@ defmodule Gate.Check do
 
       "none" ->
         say.(
-          "no verdict after #{wall} s: a part's Sprite failed and the spare could not cover it (gate pool status)"
+          "no verdict after #{wall} s: a part's Sprite failed and no Sprite could rerun it (gate pool status)"
         )
 
         2

@@ -74,9 +74,39 @@ defmodule Gate.CheckTest do
     assert row =~ ~r/test-1:\d+:gate-3:green:reran-from-gate-2$/
   end
 
-  test "no verdict when a second Sprite fails: neither green nor red", env do
+  test "two Sprites fail: one part reruns on the spare, the other there once the first ends",
+       env do
     File.touch!(Path.join(env.root, "gate-1/down"))
     File.touch!(Path.join(env.root, "gate-2/down"))
+
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    [row] = Fake.rows(env.logs)
+
+    assert row =~
+             ~r/static:\d+:gate-3:green:reran-from-gate-1\ttest-1:\d+:gate-3:green:reran-from-gate-2$/
+
+    assert err =~ "reran static on gate-3, test-1 on gate-3"
+  end
+
+  test "a crash reruns on a Sprite whose own part has ended when the spare is taken", env do
+    File.touch!(Path.join(env.root, "gate-2/down"))
+
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh crash-once"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    [row] = Fake.rows(env.logs)
+
+    assert row =~
+             ~r/static:\d+:gate-3:green:reran-from-gate-1\ttest-1:\d+:gate-3:green:reran-from-gate-2$/
+  end
+
+  test "no verdict when a part's rerun fails too: neither green nor red", env do
+    File.touch!(Path.join(env.root, "gate-2/down"))
+    File.touch!(Path.join(env.root, "gate-3/down"))
 
     {status, out, err} =
       check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
@@ -98,6 +128,8 @@ defmodule Gate.CheckTest do
     [row] = Fake.rows(env.logs)
     assert row =~ ~r/static:\d+:gate-3:green:reran-from-gate-1/
     assert log(env, "gate-1", "static") =~ "a native crash, not a gate result; reran on gate-3"
+    # A crashed Sprite is not free again: nothing else runs on gate-1.
+    assert row =~ ~r/test-1:\d+:gate-2:green$/
   end
 
   test "a core the command left is named in its log, and only the newest three stay", env do

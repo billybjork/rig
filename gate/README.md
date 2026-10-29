@@ -16,7 +16,7 @@ gate run <command...>        # a command on the working tree, on a dev Sprite
 gate pool status|provision <s>|rebuild <s>|exec <s> <cmd...>|warm [s...]
 gate times                   # rewrite the suite's partition weights
 gate stamp                   # HEAD's provision stamp
-gate self-check              # this runner's gate (compile, format, 22 tests)
+gate self-check              # this runner's gate (compile, format, 24 tests)
 ```
 
 The ship worker runs a project's gate with `RIG` set to its own clone of
@@ -73,10 +73,14 @@ The laptop holds each phase to its own limit (setup 30 min, warm 45, run
 against the command. A part's Sprite failed when the upload or launch
 fails, a phase outlasts its limit (the part is ended there), the life
 changes (a restart), the job ends outside `run`, or no poll gets through
-for 3 min. Such a part reruns once on the pool's last Sprite, the spare,
-as does a red part whose log shows a native crash (`Gate.Engine.crashed?/1`);
-a restart while warming relaunches it on the same Sprite instead, where
-the half-built cache is. A keeper that dies is relaunched. A gate stopped
+for 3 min. Such a part reruns once, as does a red part whose log shows a
+native crash (`Gate.Engine.crashed?/1`): on the pool's last Sprite, the
+spare, while it is unused, and otherwise on the first Sprite whose own part
+ends green or red (one that failed or crashed takes nothing more that run).
+A Sprite's memory loses a write now and then (soco's Node segfaults,
+2026-10), so a bad Sprite costs a rerun rather than the gate. A restart
+while warming relaunches the part on the same Sprite instead, where the
+half-built cache is. A keeper that dies is relaunched. A gate stopped
 from outside (a closed terminal, the worker's alarm, passed on by the lock)
 ends the parts it launched.
 

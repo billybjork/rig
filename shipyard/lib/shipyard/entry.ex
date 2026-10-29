@@ -146,7 +146,7 @@ defmodule Shipyard.Entry do
            red_cause(out, run)}
 
         2 ->
-          {:retry, "no verdict: a Sprite failed and the spare could not cover it", "sprite"}
+          {:retry, "no verdict: a Sprite failed and no other could rerun its part", "sprite"}
 
         status ->
           {:retry, "check-remote exited #{status}", "gate-exit-#{status}"}

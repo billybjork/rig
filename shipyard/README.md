@@ -29,10 +29,10 @@ in the project.
 
 - `gate` is the split gate on the entry's HEAD. Exit 0 is green, 1 red with
   a digest of 30 lines or fewer on stdout, 2 no verdict (a runner failed
-  and its spare could not cover it). It appends one row per run to
+  and no other could rerun its part). It appends one row per run to
   `gate_log`: at, sha, tier, verdict, wall seconds, then each part as
   `name:seconds:sprite:result`, with `:reran-from-<sprite>` on a part that
-  reran on the spare.
+  reran.
 - `tier` (optional) prints the gate's tier, which is passed to `gate` as
   its argument; a change that reaches no deploy target can take a faster
   gate. Without it every gate is `check`, and `gate` runs as written.
