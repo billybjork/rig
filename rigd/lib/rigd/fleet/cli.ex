@@ -62,7 +62,12 @@ defmodule Rigd.Fleet.CLI do
   @impl true
   def handle_call({:call, args, secs}, _from, st) do
     result =
-      System.cmd(st.deadline, [to_string(secs), st.cli | args], stderr_to_stdout: true)
+      try do
+        System.cmd(st.deadline, [to_string(secs), st.cli | args], stderr_to_stdout: true)
+      rescue
+        # A deadline or CLI that cannot run is a failed call, not a crash.
+        e in ErlangError -> {"cannot run #{st.deadline}: #{inspect(e.original)}", 127}
+      end
 
     {:reply, result, st}
   end

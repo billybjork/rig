@@ -14,7 +14,7 @@ defmodule Rigd.Fleet.Supervisor do
   @doc "The options from `gate/fleet.json` and the defaults."
   def options(file) do
     json = file |> File.read!() |> JSON.decode!()
-    gate = Path.expand("..", Path.dirname(file))
+    gate = Path.dirname(file)
 
     [
       sprites: json["sprites"],

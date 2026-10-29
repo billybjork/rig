@@ -253,6 +253,17 @@ defmodule Rigd.FleetTest do
     assert Sprite.retire?(Sprite.strike(strikes, 300))
   end
 
+  test "gate/fleet.json's options name the gate and deadline that exist" do
+    opts = Rigd.Fleet.Supervisor.options(Application.fetch_env!(:rigd, :fleet_config))
+    assert File.exists?(opts[:gate]), opts[:gate]
+    assert File.exists?(opts[:deadline]), opts[:deadline]
+  end
+
+  test "a deadline that cannot run is a failed call", %{opts: opts} do
+    start(Keyword.put(opts, :deadline, "/nowhere/deadline"))
+    assert {"cannot run /nowhere/deadline" <> _, 127} = Rigd.Fleet.CLI.call(["list"], 5)
+  end
+
   test "the nightly restore is at the next 04:00" do
     assert Fleet.until_nightly(~N[2026-10-29 03:00:00]) == 3600 * 1000
     assert Fleet.until_nightly(~N[2026-10-29 04:00:00]) == 24 * 3600 * 1000
