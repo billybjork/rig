@@ -62,10 +62,23 @@ defmodule Rigd.Fleet.Golden do
     end
   end
 
-  # `gate` under a deadline, in `dir`, stdout and stderr together.
-  defp cmd(gate, args, dir, secs) do
+  # `gate` under a deadline, in `dir`, stdout and stderr together, without
+  # the release's boot variables: a child `erl` that sees rigd's
+  # ROOTDIR or BINDIR boots rigd's release instead of its own.
+  @doc false
+  def cmd(gate, args, dir, secs) do
     deadline = Path.join(Path.dirname(Path.dirname(gate)), "libexec/deadline")
-    System.cmd(deadline, [to_string(secs), gate | args], cd: dir, stderr_to_stdout: true)
+
+    env =
+      for {k, _} <- System.get_env(),
+          k in ~w(BINDIR ROOTDIR EMU PROGNAME) or String.starts_with?(k, "RELEASE_"),
+          do: {k, nil}
+
+    System.cmd(deadline, [to_string(secs), gate | args],
+      cd: dir,
+      env: env,
+      stderr_to_stdout: true
+    )
   end
 
   defp log_path(sprite, name) do

@@ -264,6 +264,26 @@ defmodule Rigd.FleetTest do
     assert {"cannot run /nowhere/deadline" <> _, 127} = Rigd.Fleet.CLI.call(["list"], 5)
   end
 
+  test "gate runs without the boot variables of the rigd release", %{tmp_dir: tmp} do
+    gate = Path.join([tmp, "gate", "bin", "gate"])
+    File.mkdir_p!(Path.dirname(gate))
+    File.mkdir_p!(Path.join([tmp, "gate", "libexec"]))
+
+    File.ln_s!(
+      Path.expand("../../gate/libexec/deadline", __DIR__),
+      Path.join([tmp, "gate", "libexec", "deadline"])
+    )
+
+    File.write!(gate, "#!/bin/bash\necho \"${ROOTDIR:-none} ${RELEASE_ROOT:-none} $PWD\"\n")
+    File.chmod!(gate, 0o755)
+
+    System.put_env(%{"ROOTDIR" => "/rel", "RELEASE_ROOT" => "/rel"})
+    on_exit(fn -> Enum.each(~w(ROOTDIR RELEASE_ROOT), &System.delete_env/1) end)
+
+    assert {"none none " <> dir, 0} = Rigd.Fleet.Golden.cmd(gate, [], tmp, 10)
+    assert String.trim(dir) == Path.expand(tmp)
+  end
+
   test "the nightly restore is at the next 04:00" do
     assert Fleet.until_nightly(~N[2026-10-29 03:00:00]) == 3600 * 1000
     assert Fleet.until_nightly(~N[2026-10-29 04:00:00]) == 24 * 3600 * 1000
