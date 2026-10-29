@@ -55,8 +55,12 @@ defmodule Rigd.Fleet.Golden do
     end
   end
 
+  # One git command at a time in a checkout: Sprites provisioning together
+  # would otherwise race on its refs and worktree list.
   defp git(dir, args) do
-    case System.cmd("git", ["-C", dir | args], stderr_to_stdout: true) do
+    run = fn -> System.cmd("git", ["-C", dir | args], stderr_to_stdout: true) end
+
+    case :global.trans({{__MODULE__, dir}, self()}, run, [node()], :infinity) do
       {out, 0} -> {:ok, out}
       {out, status} -> {:error, "git #{hd(args)} in #{dir} exited #{status}: #{last_line(out)}"}
     end
