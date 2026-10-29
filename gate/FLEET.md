@@ -3,7 +3,9 @@
 The plan for the rest of slice 3, after the one image (`image/provision.sh`,
 a project's `.gate.json` `image`) and the reruns on any finished Sprite
 (`Gate.Engine`). Written 2026-10-29, from what the per-project pools
-taught; nothing here runs yet.
+taught; approved by Billy the same day with a pool of 10 Sprites
+(`rig-gate-1` to `-10`) and each project's own pool destroyed once it gates
+green on the shared one.
 
 ## What exists
 
@@ -110,11 +112,36 @@ few ships, its own Sprites are destroyed (Billy's call).
 
 ## Order
 
-1. Ship the image and the reruns (this branch), then the image move of
-   each project on its own pool (`image` in `.gate.json`, its own
-   Sprites re-stamped once).
-2. `Fleet.CLI`, `Fleet.Sprite`, `Fleet` and the socket in rigd, with the
-   fake `sprite` CLI of `gate/test` for its tests.
-3. `Gate.Engine` on leases; `"pool": "fleet"`.
-4. The pool built to its size (Billy's call), soco moved, then heaters;
-   the old pools destroyed.
+Each step lands on its own, live before the next.
+
+1. **Each project onto the image, on its own pool.** A PR per project,
+   through its `ship` skill: `.gate.json` gets `image` (soco:
+   `.tool-versions`, `tooling/runtime-versions.env`; heaters:
+   `.tool-versions`) and drops `stamp` and `provision`; its
+   `provision.sh` goes, and whatever names it (its `AGENTS.md` or docs,
+   `gate run`'s dev Sprite) follows. The PR's own gate re-stamps its pool
+   (each Sprite installs under `/opt/gate`, about 4 min fresh, and
+   rebuilds the PLT, 9 to 15 min, outside the run limit). Until it merges,
+   a Sprite that alternates between `main` and the PR refreshes on each
+   switch (seconds) and rebuilds the PLT each time, so ship it rather than
+   leave it open. Then `gate pool provision` each Sprite to checkpoint it
+   under the new stamp (one retry, then a rebuild, per Sprite).
+2. **`Fleet` in rigd**, tested against the fake `sprite` CLI of
+   `gate/test/test_helper.exs` (copy it into rigd's tests or move it to a
+   shared place under `gate/`): `Fleet.CLI`, `Fleet.Sprite`, `Fleet`, the
+   socket. The provision gate it runs is the project's gate parts in turn
+   (`gate check`'s parts command for the tier `check`), each relaunched
+   once after a restart, then `sprite checkpoint create` with the golden
+   comment. Pool membership is config in rig (`rigd/config` or a
+   `gate/fleet.json`), not in any project.
+3. **`Gate.Engine` on leases**, `"pool": "fleet"` in `.gate.json`: the
+   initial assignment and every rerun ask `Fleet`; `gate check` no longer
+   needs n+1 Sprites, only a free one per part as they come.
+   `check-remote.tsv` and the digest keep their format (the worker reads
+   them). Keep the list form working until both projects have moved.
+4. **The pool**: `rig-gate-2` to `-10` created and made golden by `Fleet`
+   one at a time (each holds the Sprite CLI only for its lifecycle calls).
+   `rig-gate-1`'s checkpoint v3 predates the comment format; re-golden it.
+5. **soco moves** (`"pool": "fleet"`), then **heaters**; each project's own
+   Sprites are destroyed after three green ships in a row on the shared
+   pool (soco-gate-1 to -6, heaters-gate-1 to -5; the dev Sprites stay).

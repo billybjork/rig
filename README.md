@@ -113,11 +113,9 @@ tier; agents' deny rules); shells in background terminals (`bin/bg`,
 shipyard's watch, the palette's Show and Hide); rigd (step 2) running under
 launchd with Activity, Presence, Awake, Notify, and RexBadges. Step 3's
 first slice: shipyard lives in `shipyard/` with its history; soco #373 and
-heaters #535 point their ship commands at it. `~/dev/shipyard` is a symlink
-to `rig/shipyard` for worktrees cut before #373 and #535: soco's
-`claude-node24-security` and heaters' `.claude/worktrees/design-workshop`
-still carry unshipped commits whose ship scripts call it (Billy decides
-when it goes).
+heaters #535 point their ship commands at it. The `~/dev/shipyard` symlink
+is gone (Billy, 2026-10-29): a branch cut before #373 or #535 (soco's
+`claude-node24-security`) ships only once rebased on `main`.
 
 Step 3's slice 2, done: `gate/` (its README) is the shared runner, parts
 detached on their Sprites (`gate/bin/gate self-check`); the worker exports
@@ -129,8 +127,8 @@ stack).
 Node segfaults in about one soco static part in ten on the gate Sprites,
 never on soco-dev-1. The first core (soco-gate-1, 2026-10-29) is a `ret`
 to a return address holding stale `/proc/meminfo` text: a write the
-Sprite's memory lost, Fly's to fix (a report is Billy's call). Billy: the
-Sprites are disposable, so a bad one is rebuilt, not investigated, and the
+Sprite's memory lost, Fly's to fix; Billy will not report it (2026-10-29).
+The Sprites are disposable, so a bad one is rebuilt, not investigated, and the
 runner makes one cost a rerun.
 
 Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
@@ -158,13 +156,11 @@ Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
   2026-10-29, 9 lost their Sprite 7 to 26 min into `mix precommit.ci`,
   so `Fleet`'s provision gate runs a project's parts in turn instead.
 
-Next (`gate/FLEET.md`, "Order"): each project moves to the image on its
-own pool (a PR putting `image` in `.gate.json` and dropping its
-`provision.sh`); then rigd's `Fleet` (`Fleet.CLI` running every
-lifecycle `sprite` call, one process per Sprite, leases over a socket,
-golden checkpoints restored on a failure, three strikes retire a Sprite);
-then `Gate.Engine` on leases with `"pool": "fleet"`; then the pool built
-to its size (Billy's call), soco moved, heaters moved, the old pools
+Billy approved the plan (2026-10-29): a shared pool of 10 Sprites,
+`rig-gate-1` to `-10`, and each project's own pool destroyed once it gates
+green on the shared one. Next, in the order of `gate/FLEET.md`, "Order":
+each project onto the image on its own pool; rigd's `Fleet`; `Gate.Engine`
+on leases; the pool built; soco, then heaters, moved; their pools
 destroyed.
 
 Then agents on Sprites (step 5).
