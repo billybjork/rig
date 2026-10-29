@@ -100,6 +100,20 @@ defmodule Gate.CheckTest do
     assert log(env, "gate-1", "static") =~ "a native crash, not a gate result; reran on gate-3"
   end
 
+  test "a core the command left is named in its log, and only the newest three stay", env do
+    {status, _out, _err} =
+      check(env, [{"static", "bash cmd.sh core"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 1
+
+    assert log(env, "gate-1", "static") =~
+             "sprite-gate: core " <>
+               Path.join(env.root, "gate-1/home/cores/core.!opt!node-20.1!bin!node.42.1761700000") <>
+               " (/opt/node-20.1/bin/node)"
+
+    assert env.root |> Path.join("gate-1/home/cores") |> File.ls!() |> length() == 3
+  end
+
   @tag gate: %{"limits" => %{"poll" => 0.1, "run" => 2, "unreachable" => 5, "launch" => 10}}
   test "a part past its run limit is ended on its Sprite and reruns on the spare", env do
     {status, _out, err} =

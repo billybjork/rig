@@ -118,7 +118,7 @@ to `rig/shipyard` for worktrees cut before #373 and #535; remove it once
 none remain.
 
 Step 3's slice 2, done: `gate/` (its README) is the shared runner, parts
-detached on their Sprites (21 tests, `gate/bin/gate self-check`); the
+detached on their Sprites (22 tests, `gate/bin/gate self-check`); the
 worker exports `RIG`, its clone of rig, and reads the queue through
 GraphQL. soco (#376) and heaters (#544) gate on it. soco-gate-1, which
 rebooted mid-dialyzer all day, was rebuilt and gates green again; soco

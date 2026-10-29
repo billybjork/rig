@@ -16,7 +16,7 @@ gate run <command...>        # a command on the working tree, on a dev Sprite
 gate pool status|provision <s>|rebuild <s>|exec <s> <cmd...>|warm [s...]
 gate times                   # rewrite the suite's partition weights
 gate stamp                   # HEAD's provision stamp
-gate self-check              # this runner's gate (compile, format, 21 tests)
+gate self-check              # this runner's gate (compile, format, 22 tests)
 ```
 
 The ship worker runs a project's gate with `RIG` set to its own clone of
@@ -58,8 +58,11 @@ So a part, on its Sprite:
    toolchain bump refreshes each Sprite on its first part), runs the
    project's setup, builds each warm cache whose key changed (the
    dialyzer PLT, keyed by `mix.lock`, `.tool-versions` and the stamp), and
-   runs the command. It writes its phase (`setup`, `warm`, `run`) and, at
-   the end, its status to files.
+   runs the command with core dumps on (`~/cores`, the newest three kept).
+   It writes its phase (`setup`, `warm`, `run`) and, at the end, its status
+   to files; a core the command left is named in the part's log
+   (`sprite-gate: core <file> (<program>)`), with its stack where the
+   Sprite has gdb.
 4. **Polls** (`sprite/poll.sh`, every 10 s, one call at a time so parallel
    CLI calls cannot tear `~/.sprites/sprites.json`): the phase, the status,
    the Sprite's life (boot id and PID 1's start), whether the job and its

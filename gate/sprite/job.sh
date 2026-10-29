@@ -134,11 +134,32 @@ fi
 
 phase run
 touch ~/gate-unfinished
+# A native crash keeps its core, so a part's SIGSEGV can be read rather
+# than guessed at: Node died at startup in about one soco static part in
+# ten on the gate Sprites (2026-10), never on the dev Sprite, and each
+# Sprite's restart takes its kernel log. ~/cores keeps the newest three.
+cores=~/cores
+if [ -e /proc/sys/kernel/core_pattern ] && mkdir -p "$cores" &&
+  echo "$cores/core.%E.%p.%t" | sudo -n tee /proc/sys/kernel/core_pattern >/dev/null 2>&1; then
+  ulimit -c unlimited 2>/dev/null || true
+fi
+touch "$d/run-began"
 "${cmd[@]}"
 rc=$?
 kill $beat 2>/dev/null
 wait $beat 2>/dev/null
 health
+# Each core the command left: its program (%E, the path with / as !) and,
+# where gdb is, the crashing thread's stack.
+for core in $(find "$cores" -maxdepth 1 -name 'core.*' -newer "$d/run-began" 2>/dev/null); do
+  exe=${core##*/core.}
+  exe=$(echo "${exe%.*.*}" | tr '!' /)
+  say "core $core ($exe)"
+  if command -v gdb >/dev/null; then
+    gdb -q -batch -ex 'bt 30' -ex 'p $_siginfo._sifields._sigfault.si_addr' -ex 'x/4i $pc' "$exe" "$core" 2>&1 | grep -v '^\[New LWP' | head -50 | sed 's/^/sprite-core: /'
+  fi
+done
+ls -t "$cores"/core.* 2>/dev/null | tail -n +4 | while IFS= read -r old; do rm -f "$old"; done
 # A command killed by a signal (a Bus error as the Sprite fails) may have
 # been compiling, so its marker stays.
 [ "$rc" -ge 128 ] || rm -f ~/gate-unfinished

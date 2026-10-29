@@ -15,6 +15,11 @@ case "$1" in
   crash-once)
     if once crashed; then echo "Segmentation fault (core dumped)"; exit 139; fi
     echo fine ;;
+  core) # a crash that left a core, as job.sh's core_pattern names it
+    mkdir -p ~/cores
+    for n in 1 2 3; do touch -t 202601010000 ~/cores/core.old.$n.1; done
+    touch ~/cores/'core.!opt!node-20.1!bin!node.42.1761700000'
+    exit 1 ;;
   slow-once)
     if once slowed; then sleep 30; echo "never"; fi
     echo fine ;;
