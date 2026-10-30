@@ -127,9 +127,19 @@ defmodule Gate.CommandsTest do
     assert System.monotonic_time(:millisecond) - t0 < 6000
   end
 
-  test "golden: the check tier's parts in turn on one Sprite, a part its Sprite failed run there once more; the stamp on stdout, red or green",
+  @tag gate: %{
+         "warm" => [
+           %{
+             "name" => "plt",
+             "parts" => ["one"],
+             "key" => ["cmd.sh"],
+             "command" => "bash cmd.sh restart-twice"
+           }
+         ]
+       }
+  test "golden: sets up and warms each cache, no part run; a step whose Sprite restarted resumes there; the stamp on stdout",
        env do
-    Fake.parts(env.top, [{"one", "bash cmd.sh green"}, {"two", "bash cmd.sh restart-once"}])
+    Fake.parts(env.top, [{"one", "bash cmd.sh red"}, {"two", "bash cmd.sh red"}])
     Fake.git(env.top, ["add", "."])
     Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "parts"])
     config = Fake.config(env.top)
@@ -137,19 +147,23 @@ defmodule Gate.CommandsTest do
     assert status == 0, err
     sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
     assert out == Gate.Stamp.stamp(config, sha) <> "\n"
-    assert err =~ "one: green"
-    assert err =~ "two: sprite_failed"
-    assert err =~ "two: green"
+    assert err =~ "setup: green"
+    # Its first restart relaunches it within the try, the second ends the try.
+    assert err =~ "warm-plt: sprite_failed"
+    assert err =~ "warm-plt: green"
+    refute err =~ ~r/\b(one|two):/
+    [setup] = Path.wildcard(Path.join(env.logs, "gate-2-*-setup.log"))
+    assert File.read!(setup) =~ "setup ran"
+    assert File.read!(Path.join(env.root, "gate-2/home/.gate-warm/proj-plt")) != ""
     refute File.exists?(Path.join(env.root, "gate-1/home/parts"))
+  end
 
-    # A red main is not the Sprite's: every part still runs, and it passes.
-    Fake.parts(env.top, [{"one", "bash cmd.sh red"}, {"two", "bash cmd.sh green"}])
-    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "red"])
-    {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "gate-2") end)
-    sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
-    assert {status, out} == {0, Gate.Stamp.stamp(config, sha) <> "\n"}
-    assert err =~ "one: red"
-    assert err =~ "two: green"
+  test "golden: a Sprite that fails a step every try fails the golden", env do
+    File.write!(Path.join(env.top, "setup.sh"), "exit 3\n")
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "no setup"])
+    {status, _out, err} = Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
+    assert status == 2, err
+    assert length(String.split(err, "setup: sprite_failed")) == 4
   end
 
   @tag gate: %{
@@ -175,7 +189,7 @@ defmodule Gate.CommandsTest do
     Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "parts"])
     {status, _out, err} = Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
     assert status == 0, err
-    [log] = Path.wildcard(Path.join(env.logs, "gate-2-*-one.log"))
+    [log] = Path.wildcard(Path.join(env.logs, "gate-2-*-warm-plt.log"))
     assert File.read!(log) =~ "seeded plt"
     assert File.read!(log) =~ "warmed plt"
   end

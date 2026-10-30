@@ -88,7 +88,7 @@ ends the parts it launched.
 ## The shared pool
 
 rigd's `Fleet` (`rigd/lib/rigd/fleet.ex`, the plan in `FLEET.md`) keeps
-the Sprites `fleet.json` names golden: each project's provision gate,
+the Sprites `fleet.json` names golden: each project's setup and warm caches,
 `gate golden <sprite>` from a detached worktree of its `origin/main`,
 then a checkpoint whose comment names every project's stamp (`gate stamp
 origin/main`). A project whose `.gate.json` says `"pool": "fleet"` gates

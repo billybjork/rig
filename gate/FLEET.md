@@ -31,17 +31,20 @@ green on the shared one.
 
 `sprite create` takes no source, so a checkpoint cannot seed another
 Sprite. "Golden" is each Sprite's own checkpoint, taken after every
-project's provision gate passed on it under the current stamps.
+project's setup ran on it under the current stamps.
 
-A provision gate today is one long part (soco's `mix precommit.ci`, about
-25 min after the PLT), and that is where the Sprites fail: on 2026-10-29
-9 of 15 such runs (soco's pool and rig-gate-1) lost their Sprite 7 to
-26 min in, a restart or 180 s unreachable, with memory to spare, while the same checks split into parts of 5 to 8 min gate daily.
-So `Fleet`'s provision gate runs the project's gate parts one after
-another on the Sprite, each short and each relaunched once after a
-restart, rather than one command. Its comment
-names each project's stamp (`golden soco 13545dd5 heaters 7d1c…`), so
-`Fleet` can tell a current one from a stale one.
+A golden only sets up (`gate golden`, `Gate.Golden`; Billy, 2026-10-30,
+after Amp's Orbs): the image and each project's pins, its setup script
+(deps), then each warm cache (soco's dialyzer PLT, from the laptop's seed
+when the key changed), one short step at a time. It runs no gate part and
+does not need `main` green: ship gates are the verification. A step whose
+Sprite restarted runs again on the same Sprite, where the disk kept what
+the last try built, up to three times. Until then a golden ran every part
+of the tier `check` in turn: on 2026-10-29 and 30 that made 16 golden
+checkpoints in about 137 provisioning attempts, the long serial run losing
+its Sprite to restarts, and a red `main` keeping new Sprites out of the
+pool. Its comment names each project's stamp (`golden soco 13545dd5
+heaters 7d1c…`), so `Fleet` can tell a current one from a stale one.
 
 ## `Rigd.Fleet`
 
@@ -80,7 +83,7 @@ restore, else any idle Sprite.
 failed the part) and `crashed` (a native crash) restore its golden
 checkpoint (about 30 s) before it is idle again and count a strike; three
 strikes in a day retire it, and `Fleet` builds a replacement (create,
-provision, every project's provision gate, checkpoint) while the pool runs
+provision, every project's setup, checkpoint) while the pool runs
 one short. Billy's rule: Sprites are disposable, so a retired one is
 destroyed, not investigated.
 
@@ -98,7 +101,7 @@ golden checkpoint stale for that project. Gates keep working (each part
 installs what it lacks), but a restore would go back to the old tools. So
 `Fleet` re-goldens idle Sprites one at a time when `main`'s stamps change
 (it reads them from each project's primary checkout, `git show
-origin/main:…`): lease it to itself, run each project's provision gate,
+origin/main:…`): lease it to itself, run each project's setup,
 checkpoint. The dialyzer PLT is keyed by the stamp, so this is where its
 9 to 15 min rebuild happens, not in a ship's gate. Nightly, every idle
 Sprite restores its golden checkpoint, which drops whatever the day left.

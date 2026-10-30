@@ -13,7 +13,7 @@ defmodule Rigd.Fleet.Sprite do
     * `restoring`: back to its golden checkpoint (about 30 s), after a
       part it failed or crashed, and nightly.
     * `waiting`, then `provisioning`: made golden: created when missing, then every
-      project's provision gate (`gate golden`, `Rigd.Fleet.Golden`) and a
+      project's setup (`gate golden`, `Rigd.Fleet.Golden`) and a
       checkpoint whose comment names each project's stamp (`golden soco
       13545dd5… heaters 7d1c…`). It waits for its turn (`Rigd.Fleet.turn/2`):
       three Sprites provision at a time. A provision the Sprite fails is tried
@@ -275,7 +275,7 @@ defmodule Rigd.Fleet.Sprite do
   defp create(name),
     do: CLI.ok(["create", "--skip-console", name], 300, ~r/already exists/i)
 
-  # Every project's provision gate, in turn: `{:ok, stamps}`, or the first
+  # Every project's setup, in turn: `{:ok, stamps}`, or the first
   # that did not pass.
   defp gates(opts, name) do
     Enum.reduce_while(opts[:projects], {:ok, %{}}, fn dir, {:ok, stamps} ->

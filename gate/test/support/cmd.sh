@@ -24,6 +24,10 @@ case "$1" in
     if once slowed; then sleep 30; echo "never"; fi
     echo fine ;;
   restart-once) if once restarted; then restart; sleep 30; fi; echo fine ;;
+  restart-twice)
+    n=$(cat "$FAKE_SPRITES/restarts" 2>/dev/null || echo 0)
+    if [ "$n" -lt 2 ]; then echo $((n + 1)) >"$FAKE_SPRITES/restarts"; restart; sleep 30; fi
+    echo built ;;
   drop-keeper)
     kill -9 -- "-$(cat ~/parts/*/keeper.pid)"
     sleep 1; echo "outlived its keeper" ;;

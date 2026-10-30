@@ -5,7 +5,7 @@
 #   gate check [tier]           the split gate on HEAD, on the project's Sprite pool
 #   gate run <command...>       a command on the working tree, on a dev Sprite
 #   gate pool status|provision|rebuild|exec|warm   the pool's Sprites
-#   gate golden <sprite>        the check tier's parts in turn on one Sprite (rigd's Fleet)
+#   gate golden <sprite>        set one Sprite up and warm its caches (rigd's Fleet)
 #   gate times                  rewrite the suite's partition weights
 #   gate stamp [rev]            HEAD's (or rev's) provision stamp
 #   gate lock ...               the machine's gate lock (libexec/lock)

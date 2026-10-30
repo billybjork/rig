@@ -2,8 +2,8 @@ defmodule Rigd.Fleet.Golden do
   @moduledoc """
   What makes a Sprite golden, run through rig's `gate`: each project's
   stamp on `origin/main` (`gate stamp origin/main` in its primary
-  checkout, after a fetch), and its provision gate on a Sprite (`gate
-  golden <sprite>`, the parts of its tier `check` in turn) from a detached
+  checkout, after a fetch), and its setup on a Sprite (`gate golden
+  <sprite>`: tools, deps and warm caches, no gate part) from a detached
   worktree of `origin/main` that is removed after. The primary checkout's
   branch and tree are never touched. Each run's output goes to
   `~/Library/Logs/rigd-fleet/`.
@@ -22,9 +22,9 @@ defmodule Rigd.Fleet.Golden do
   end
 
   @doc """
-  The project's provision gate on `sprite`: `{:green, name, stamp}`,
-  `{:red, why}` (a part failed on `main`: not the Sprite's doing), or
-  `{:sprite_failed, why}`.
+  The project's setup on `sprite`: `{:green, name, stamp}`, `{:red, why}`
+  (`gate golden` exited 1: not the Sprite's doing), or `{:sprite_failed,
+  why}`.
   """
   def run(gate, dir, sprite) do
     tmp =
@@ -43,8 +43,8 @@ defmodule Rigd.Fleet.Golden do
 
       case status do
         0 -> {:green, name, last_line(stamp)}
-        1 -> {:red, "#{name}'s provision gate went red on main (#{log})"}
-        _ -> {:sprite_failed, "#{name}'s provision gate: exit #{status} (#{log})"}
+        1 -> {:red, "#{name}'s golden setup exited 1 (#{log})"}
+        _ -> {:sprite_failed, "#{name}'s golden setup: exit #{status} (#{log})"}
       end
     end
   end
