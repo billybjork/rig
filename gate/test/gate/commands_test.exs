@@ -127,7 +127,7 @@ defmodule Gate.CommandsTest do
     assert System.monotonic_time(:millisecond) - t0 < 6000
   end
 
-  test "golden: the check tier's parts in turn on one Sprite, a part its Sprite failed run there once more; the stamp on stdout",
+  test "golden: the check tier's parts in turn on one Sprite, a part its Sprite failed run there once more; the stamp on stdout, red or green",
        env do
     Fake.parts(env.top, [{"one", "bash cmd.sh green"}, {"two", "bash cmd.sh restart-once"}])
     Fake.git(env.top, ["add", "."])
@@ -142,11 +142,14 @@ defmodule Gate.CommandsTest do
     assert err =~ "two: green"
     refute File.exists?(Path.join(env.root, "gate-1/home/parts"))
 
+    # A red main is not the Sprite's: every part still runs, and it passes.
     Fake.parts(env.top, [{"one", "bash cmd.sh red"}, {"two", "bash cmd.sh green"}])
     Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "red"])
     {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "gate-2") end)
-    assert {status, out} == {1, ""}
-    refute err =~ "two:"
+    sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
+    assert {status, out} == {0, Gate.Stamp.stamp(config, sha) <> "\n"}
+    assert err =~ "one: red"
+    assert err =~ "two: green"
   end
 
   @tag gate: %{

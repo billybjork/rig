@@ -13,8 +13,13 @@ defmodule Gate.Golden do
   Sprite down mid-build on every try for a day (2026-10-30), and only a
   golden Sprite ever had one.
 
-  Prints HEAD's stamp on stdout when every part is green. Exit 0 green, 1
-  a red part, 2 the Sprite failed a part twice. It takes no lock: the
+  It proves the Sprite, not the project's main: every part runs, and a
+  part that came to a verdict, green or red, passes. A red main stopped
+  it at its first red part and kept every new Sprite out of the pool for
+  as long as main stayed red (soco's Hex advisory, 2026-10-30).
+
+  Prints HEAD's stamp on stdout when every part came to a verdict. Exit 0
+  then, 2 when the Sprite failed a part twice. It takes no lock: the
   Sprite is `Fleet`'s while this runs.
   """
 
@@ -44,6 +49,7 @@ defmodule Gate.Golden do
       config
       |> Check.parts("check")
       |> Enum.reduce_while(:green, fn {name, command}, :green ->
+        # A red part is main's, not the Sprite's: the next part runs.
         job = %Engine.Job{
           name: name,
           argv: String.split(command),
@@ -51,7 +57,7 @@ defmodule Gate.Golden do
         }
 
         case attempt(ctx, job, sprite, 1) do
-          :green -> {:cont, :green}
+          verdict when verdict in [:green, :red] -> {:cont, :green}
           other -> {:halt, other}
         end
       end)
@@ -62,9 +68,6 @@ defmodule Gate.Golden do
       :green ->
         IO.puts(stamp)
         0
-
-      :red ->
-        1
 
       :sprite_failed ->
         2
