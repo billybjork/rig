@@ -13,9 +13,10 @@ rex.action{
   category = "Tab",
   keywords = "recently closed reopen restore undo tab pane claude resume",
   run = function()
-    -- A picker in a floating layer, which closes once it is done.
+    -- A picker in a floating layer over the whole tab, so the panes behind
+    -- it don't show through; it closes once it is done, back to this tab.
     local r, err = rex.session.new_layer{
-      bounds = { 0.15, 0.2, 0.7, 0.5 },
+      bounds = { 0, 0, 1, 1 },
       focus = true,
       layout = rex.layout.block{
         flavor = terminal .. ".shell",

@@ -75,15 +75,12 @@ case "${1:-}" in
   ls) list ;;
   open) [ -n "${2:-}" ] || fail "usage: closed open N"; open_one "$2" ;;
   pick)
-    lines=()
-    while IFS= read -r l; do lines+=("${l#*. }"); done < <(list)
-    [ ${#lines[@]} -gt 0 ] || { echo "Nothing closed recently."; sleep 2; exit 0; }
-    PS3="Reopen which (Enter cancels)? "
-    select _ in "${lines[@]}"; do
-      [ -n "${REPLY:-}" ] && [ "$REPLY" -ge 1 ] 2>/dev/null && [ "$REPLY" -le ${#lines[@]} ] || exit 0
-      open_one "$REPLY"
-      exit 0
-    done
+    lines=$(list)
+    [ -n "$lines" ] || { echo "Nothing closed recently."; sleep 2; exit 0; }
+    printf '\n  Recently closed, newest first\n\n%s\n\n' "$lines"
+    read -rp "Reopen which (Enter cancels)? " n || exit 0
+    [ -n "$n" ] || exit 0
+    ( open_one "$n" ) || { sleep 3; exit 1; }  # leave the error up to read
     ;;
   *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
 esac
