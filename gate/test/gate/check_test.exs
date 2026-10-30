@@ -192,14 +192,24 @@ defmodule Gate.CheckTest do
     assert ps |> String.split() |> Enum.reject(&tail_client?/1) == []
   end
 
-  test "a Sprite that restarts mid-part fails it, and the part reruns on the spare", env do
+  test "a part whose Sprite restarted is relaunched there; restarted again, it reruns on the spare",
+       env do
     {status, _out, err} =
       check(env, [{"static", "bash cmd.sh restart-once"}, {"test-1", "bash cmd.sh green"}])
 
     assert status == 0, err
-    assert err =~ "restarted mid-part (life life-1, now life-"
+    assert err =~ "static: gate-1 restarted; rerunning it there"
     [row] = Fake.rows(env.logs)
-    assert row =~ "reran-from-gate-1"
+    assert row =~ ~r/\tstatic:\d+:gate-1:green\t/
+    assert File.read!(Path.join(env.root, "gate-3/home/.life")) == "life-1\n"
+    refute File.exists?(Path.join(env.root, "gate-3/home/parts"))
+
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh restarts 2"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    assert err =~ "restarted mid-part (life life-"
+    assert List.last(Fake.rows(env.logs)) =~ ~r/\tstatic:\d+:gate-3:green:reran-from-gate-1/
   end
 
   test "a Sprite that stops answering mid-part fails it after the unreachable limit", env do
@@ -402,11 +412,17 @@ defmodule Gate.CheckTest do
       Gate.FakeFleet.stop(fleet)
     end
 
-    test "a part whose Sprite restarted is given back as restarted, not failed", env do
+    test "a part whose Sprite restarted keeps its lease and is relaunched there; restarted again, it is given back as restarted",
+         env do
       fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
       {status, _out, err} = check(env, [{"static", "bash cmd.sh restart-once"}])
       assert status == 0, err
-      assert [{"gate-1", "restarted"}, {_, "green"}] = Gate.FakeFleet.released(fleet)
+      assert [{"gate-1", "green"}] = Gate.FakeFleet.released(fleet)
+
+      {status, _out, err} = check(env, [{"static", "bash cmd.sh restarts 2"}])
+      assert status == 0, err
+      assert [_, {first, "restarted"}, {second, "green"}] = Gate.FakeFleet.released(fleet)
+      assert first != second
       Gate.FakeFleet.stop(fleet)
     end
 

@@ -18,7 +18,10 @@ defmodule Gate.Engine do
       Sprite instead: a cold dialyzer PLT build runs the Sprite out of
       memory at about 15 min, and the retry finishes from what it left.
 
-  A part reruns once, on a free Sprite: the spare while no part has taken
+  A part whose Sprite restarted is relaunched there once, where its
+  caches are warm: restarts are platform events, so another Sprite is no
+  safer (Billy, 2026-10-30). Any other failure, a second restart, or a
+  crash reruns once on a free Sprite: the spare while no part has taken
   it, then any Sprite whose own part has ended green or red (a Sprite that
   failed or crashed is never free again in this run). With none free it
   waits for one; when every other part has ended and none is free, it is
@@ -164,6 +167,7 @@ defmodule Gate.Engine do
         phase_at: now,
         last_ok: now,
         warm_relaunched: false,
+        relaunched: false,
         lease: base[:lease]
       })
 
@@ -329,6 +333,18 @@ defmodule Gate.Engine do
 
         ctx.say.("#{part.job.name}: #{part.sprite} restarted while warming; relaunching it there")
         relaunch(ctx, state, %{part | warm_relaunched: true})
+
+      # Restarts are platform events, no likelier on this Sprite than on
+      # another, and here its caches are warm: its rerun is here.
+      s["life"] not in [nil, "", part.life] and not part.relaunched ->
+        note(
+          part,
+          "it restarted mid-part (life #{part.life}, now #{s["life"]}); rerunning it here"
+        )
+
+        ctx.say.("#{part.job.name}: #{part.sprite} restarted; rerunning it there")
+        ctx.report.(part, :working, "#{part.sprite} restarted; rerunning it there")
+        relaunch(ctx, state, %{part | relaunched: true})
 
       s["life"] not in [nil, "", part.life] ->
         failed(

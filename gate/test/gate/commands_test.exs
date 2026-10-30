@@ -133,7 +133,7 @@ defmodule Gate.CommandsTest do
              "name" => "plt",
              "parts" => ["one"],
              "key" => ["cmd.sh"],
-             "command" => "bash cmd.sh restart-twice"
+             "command" => "bash cmd.sh restarts 3"
            }
          ]
        }
@@ -148,7 +148,9 @@ defmodule Gate.CommandsTest do
     sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
     assert out == Gate.Stamp.stamp(config, sha) <> "\n"
     assert err =~ "setup: green"
-    # Its first restart relaunches it within the try, the second ends the try.
+    # Its first restart relaunches it within the try (while warming), as
+    # does the second (a restart), and the third ends the try: no Sprite
+    # is free for a golden's rerun.
     assert err =~ "warm-plt: sprite_failed"
     assert err =~ "warm-plt: green"
     refute err =~ ~r/\b(one|two):/

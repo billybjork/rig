@@ -22,7 +22,10 @@ green on the shared one.
   the script cannot already hold side by side.
 - **Reruns.** A part whose Sprite failed, or whose command crashed, reruns
   once: on the spare while unused, then on the first Sprite whose own part
-  ended green or red. A part with nowhere to go waits.
+  ended green or red. A part with nowhere to go waits. A part whose Sprite
+  restarted is first relaunched on that Sprite, where its caches are warm
+  (Billy, 2026-10-30): a restart is a platform event, no likelier there
+  than anywhere.
 - **The trial Sprite** `rig-gate-1`, provisioned from the image and gated
   green by both projects' provision gates (`gate pool provision` from each
   project's trial branch), then checkpointed: its golden checkpoint.

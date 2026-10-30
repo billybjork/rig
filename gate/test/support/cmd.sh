@@ -24,9 +24,9 @@ case "$1" in
     if once slowed; then sleep 30; echo "never"; fi
     echo fine ;;
   restart-once) if once restarted; then restart; sleep 30; fi; echo fine ;;
-  restart-twice)
+  restarts) # the first $2 runs, on any Sprite
     n=$(cat "$FAKE_SPRITES/restarts" 2>/dev/null || echo 0)
-    if [ "$n" -lt 2 ]; then echo $((n + 1)) >"$FAKE_SPRITES/restarts"; restart; sleep 30; fi
+    if [ "$n" -lt "$2" ]; then echo $((n + 1)) >"$FAKE_SPRITES/restarts"; restart; sleep 30; fi
     echo built ;;
   drop-keeper)
     kill -9 -- "-$(cat ~/parts/*/keeper.pid)"
