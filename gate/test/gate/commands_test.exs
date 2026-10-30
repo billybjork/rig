@@ -5,8 +5,8 @@ defmodule Gate.CommandsTest do
 
   @moduletag :tmp_dir
 
-  setup %{tmp_dir: tmp} do
-    env = Fake.setup(tmp, ~w(gate-1 gate-2))
+  setup %{tmp_dir: tmp} = context do
+    env = Fake.setup(tmp, ~w(gate-1 gate-2), Map.get(context, :gate, %{}))
     on_exit(fn -> Fake.stop(env.root) end)
     env
   end
@@ -147,6 +147,34 @@ defmodule Gate.CommandsTest do
     {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "gate-2") end)
     assert {status, out} == {1, ""}
     refute err =~ "two:"
+  end
+
+  @tag gate: %{
+         "warm" => [
+           %{"name" => "plt", "parts" => ["one"], "key" => ["cmd.sh"], "command" => "ls seeded"}
+         ]
+       }
+  test "golden: a warm cache with a seed on the laptop starts from it on a Sprite that never built it",
+       env do
+    seeds = Path.join(env.tmp, "seeds")
+    stage = Path.join(env.tmp, "seed")
+    File.mkdir_p!(Path.join(stage, "proj"))
+    File.write!(Path.join([stage, "proj", "seeded"]), "a PLT\n")
+    config = Fake.config(env.top)
+    File.mkdir_p!(Path.join(seeds, config.name))
+    tar = Path.join([seeds, config.name, "plt.tar"])
+    {_, 0} = System.cmd("tar", ["-cf", tar, "-C", stage, "proj"])
+    System.put_env("GATE_SEED", seeds)
+    on_exit(fn -> System.delete_env("GATE_SEED") end)
+
+    Fake.parts(env.top, [{"one", "bash cmd.sh green"}])
+    Fake.git(env.top, ["add", "."])
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "parts"])
+    {status, _out, err} = Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
+    assert status == 0, err
+    [log] = Path.wildcard(Path.join(env.logs, "gate-2-*-one.log"))
+    assert File.read!(log) =~ "seeded plt"
+    assert File.read!(log) =~ "warmed plt"
   end
 
   test "stamp <rev>: the stamp as that commit's .gate.json names it", env do

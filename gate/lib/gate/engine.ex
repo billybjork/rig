@@ -53,6 +53,8 @@ defmodule Gate.Engine do
     :work,
     :spare,
     stream: false,
+    # A golden run stages each warm cache's seed (`Gate.Golden`).
+    seed: false,
     report: &__MODULE__.no_report/3,
     say: &__MODULE__.say/1
   ]
@@ -191,6 +193,12 @@ defmodule Gate.Engine do
 
     if ctx.config.image, do: File.cp!(Gate.Stamp.image(), Path.join(dir, "image.sh"))
 
+    for warm <- part.job.warm,
+        ctx.seed,
+        seed = seed(ctx.config, warm.name),
+        File.exists?(seed),
+        do: File.cp!(seed, Path.join(dir, "seed-#{warm.name}.tar"))
+
     File.write!(Path.join(dir, "vars"), vars(ctx, part.job))
     File.write!(Path.join(dir, "argv"), Enum.map(part.job.argv, &[&1, 0]))
 
@@ -210,6 +218,17 @@ defmodule Gate.Engine do
         {out, _} -> {:error, "packing the part failed: #{Sprite.last_line(out)}"}
       end
     end
+  end
+
+  @doc """
+  The laptop's seed for a project's warm cache: a tar of what the cache
+  builds, from the Sprite's home (`soco/priv/plts/…`, `.mix/…`), which a
+  Sprite that never built the cache unpacks before building it. Under
+  `$GATE_SEED`, else `~/.cache/gate-seed`, as `<project>/<warm>.tar`.
+  """
+  def seed(config, warm) do
+    dir = System.get_env("GATE_SEED") || Path.expand("~/.cache/gate-seed")
+    Path.join([dir, config.name, warm <> ".tar"])
   end
 
   defp vars(ctx, job) do

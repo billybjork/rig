@@ -8,6 +8,11 @@ defmodule Gate.Golden do
   15 lost their Sprite 7 to 26 min in, 2026-10-29). A part whose Sprite
   failed it runs there once more.
 
+  A warm cache with a seed on the laptop (`Gate.Engine.seed/2`) starts
+  from it on a Sprite that never built it: a cold soco PLT took the
+  Sprite down mid-build on every try for a day (2026-10-30), and only a
+  golden Sprite ever had one.
+
   Prints HEAD's stamp on stdout when every part is green. Exit 0 green, 1
   a red part, 2 the Sprite failed a part twice. It takes no lock: the
   Sprite is `Fleet`'s while this runs.
@@ -23,7 +28,16 @@ defmodule Gate.Golden do
     work =
       Path.join(System.tmp_dir!(), "gate-golden-#{run}-#{System.unique_integer([:positive])}")
 
-    ctx = %Engine{config: config, sha: sha, stamp: stamp, run: run, work: work, say: &say/1}
+    ctx = %Engine{
+      config: config,
+      sha: sha,
+      stamp: stamp,
+      run: run,
+      work: work,
+      seed: true,
+      say: &say/1
+    }
+
     say("#{sprite}: #{config.name} #{Check.short(sha)}, stamp #{stamp}")
 
     result =

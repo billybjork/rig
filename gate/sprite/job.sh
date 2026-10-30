@@ -55,6 +55,19 @@ health() {
 beat=$!
 trap 'kill $beat 2>/dev/null' EXIT
 
+# A Sprite has 16 GiB and no swap, and a cold dialyzer PLT (soco's
+# static-1) took it down mid-build on every try (2026-10-30). 8 GiB of swap
+# on the scratch disk, through a loop device: swapon refuses a file on the
+# root's overlayfs. A restart drops it, so each part checks.
+if [ -r /proc/swaps ] && [ "$(wc -l </proc/swaps)" -le 1 ] && sudo -n true 2>/dev/null; then
+  swap=/tmp/gate-swap
+  if [ -f "$swap" ] || sudo fallocate -l 8G "$swap"; then
+    sudo chmod 600 "$swap" && loop=$(sudo losetup -f --show "$swap") && sudo chmod 660 "$loop" &&
+      sudo mkswap "$loop" >/dev/null && sudo swapon "$loop" && say "swap: 8 GiB on $loop" ||
+      say "swap: could not turn it on"
+  fi
+fi
+
 repo=~/$NAME
 [ -d "$repo/.git" ] || git init -q "$repo"
 cd "$repo" || finish 90
@@ -131,6 +144,11 @@ if [ ${#WARM_NAMES[@]} -gt 0 ]; then
     keyfile=~/.gate-warm/$NAME-$name
     [ ! -e ~/.gate-warm/"$name" ] || mv ~/.gate-warm/"$name" "$keyfile"
     [ "$(cat "$keyfile" 2>/dev/null)" != "$key" ] || continue
+    # A golden run's seed (gate/lib/gate/engine.ex, seed/2), for a Sprite
+    # that never built this cache: the build then only checks it.
+    if [ ! -e "$keyfile" ] && [ -f "$d/seed-$name.tar" ]; then
+      tar -xf "$d/seed-$name.tar" -C ~ && say "seeded $name" || say "seeding $name failed"
+    fi
     say "warming $name (key $key)"
     touch "$unfinished"
     if bash -c "${WARM_CMDS[i]}" || { say "warming $name failed; once more" && bash -c "${WARM_CMDS[i]}"; }; then
