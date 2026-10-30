@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Recently closed tabs and panes, as rigd records them (rigd/lib/rigd/closed.ex),
+# for the palette's "Recently Closed" (rex/closed.lua).
+#
+#   closed ls        the last 20, newest first, numbered
+#   closed pick      choose one of them and reopen it
+#   closed open N    reopen number N as a new tab in its session (the current
+#                    one if its own is gone); a Claude pane resumes its session
+set -euo pipefail
+
+file=$HOME/.local/state/rig/closed.jsonl
+terminal=com.superlogical.terminal
+fail() { echo "closed: $*" >&2; exit 1; }
+
+# The last 20 records, newest first, as a JSON array.
+recent() {
+  [ -s "$file" ] || { echo '[]'; return; }
+  jq -sc 'reverse | .[:20]' "$file"
+}
+
+# One line per record: "N. 3m ago  session · what it was".
+list() {
+  recent | jq -r '
+    def ago: (now - (.at | fromdateiso8601)) as $s
+      | if $s < 60 then "just now"
+        elif $s < 3600 then "\($s / 60 | floor)m ago"
+        elif $s < 86400 then "\($s / 3600 | floor)h ago"
+        else "\($s / 86400 | floor)d ago" end;
+    def name: [.panes[].title // empty][0] // (.label | sub("^⚙ "; "")) ;
+    def extra: (.panes | length) as $n
+      | if $n > 1 then " (\($n) panes)" elif .kind == "pane" then " (pane)" else "" end;
+    to_entries[] | .value as $r
+    | "\(.key + 1). \($r | ago)  \($r.session) · \($r | name)\($r | extra)"'
+}
+
+open_one() {
+  local n=$1 rec sid label layout created wid
+  rec=$(recent | jq -c --argjson n "$n" '.[$n - 1] // empty')
+  [ -n "$rec" ] || fail "no closed tab number $n"
+
+  sid=$(jq -r .session_id <<<"$rec")
+  rex ls --json | jq -e --arg s "$sid" 'any(.sessions[]; .session_id == $s)' >/dev/null ||
+    sid=${REX_SESSION:?closed: its session is gone and REX_SESSION is unset}
+
+  # Each pane a shell at its directory; a Claude pane runs claude --resume in
+  # an interactive login zsh (Billy's PATH), and stays a shell once it exits.
+  # Several panes sit side by side, equally wide.
+  layout=$(jq -c --arg t "$terminal.shell" '
+    def pane: {block: {flavor: $t, options: ({cwd} + (if .claude_session then {command: (
+        ["/bin/zsh", "-lic", "claude \"$@\"; exec zsh -l", "zsh", "--resume", .claude_session]
+        + (if .skip_permissions then ["--dangerously-skip-permissions"] else [] end))} else {} end)
+      | with_entries(select(.value != null)))}};
+    def row: if length == 1 then .[0] | pane
+      else {split: {direction: "horizontal", ratio: (1 / length),
+                    before: (.[0] | pane), after: (.[1:] | row)}} end;
+    .panes | row' <<<"$rec")
+  # A default label ("Window 89abcdef") is left for Rex to make anew.
+  label=$(jq -r '.label | sub("^⚙ "; "") | if test("^Window [0-9a-f]{8}$") then "" else . end' <<<"$rec")
+
+  created=$(rex api call -s "$sid" session.new_window \
+    "$(jq -nc --argjson l "$layout" --arg w "$label" '{layout: $l} + (if $w == "" then {} else {window_label: $w} end)')")
+  wid=$(jq -r .window_id <<<"$created")
+  [ "$sid" = "${REX_SESSION:-}" ] || rex do session.select session_id="$sid" window_id="$wid" >/dev/null ||
+    echo "closed: reopened in another session; switch to it from the sidebar" >&2
+
+  # Reopened, so it leaves the list.
+  local tmp
+  tmp=$(mktemp "$file.XXXXXX")
+  jq -c --arg id "$(jq -r .id <<<"$rec")" 'select(.id != $id)' "$file" >"$tmp" && mv "$tmp" "$file"
+}
+
+case "${1:-}" in
+  ls) list ;;
+  open) [ -n "${2:-}" ] || fail "usage: closed open N"; open_one "$2" ;;
+  pick)
+    lines=()
+    while IFS= read -r l; do lines+=("${l#*. }"); done < <(list)
+    [ ${#lines[@]} -gt 0 ] || { echo "Nothing closed recently."; sleep 2; exit 0; }
+    PS3="Reopen which (Enter cancels)? "
+    select _ in "${lines[@]}"; do
+      [ -n "${REPLY:-}" ] && [ "$REPLY" -ge 1 ] 2>/dev/null && [ "$REPLY" -le ${#lines[@]} ] || exit 0
+      open_one "$REPLY"
+      exit 0
+    done
+    ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
+esac

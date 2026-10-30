@@ -5,7 +5,15 @@ defmodule Rigd.Application do
   def start(_type, _args) do
     daemon =
       if Application.get_env(:rigd, :start),
-        do: [Rigd.Presence, Rigd.Awake, Rigd.Notify, Rigd.RexBadges, Rigd.Status, Rigd.Activity],
+        do: [
+          Rigd.Presence,
+          Rigd.Awake,
+          Rigd.Notify,
+          Rigd.RexBadges,
+          Rigd.Closed,
+          Rigd.Status,
+          Rigd.Activity
+        ],
         else: []
 
     # Temporary: a fleet that keeps failing stops on its own and leaves the

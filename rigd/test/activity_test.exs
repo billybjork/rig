@@ -48,5 +48,16 @@ defmodule Rigd.ActivityTest do
     assert a.shell_owners == MapSet.new([100])
     assert [%{block: "b1", state: "idle", window_id: "w1"}, %{block: "b2"}] = a.agents
     assert a.windows == [%{session_id: "s1", window_id: "w1", label: "Window 1"}]
+
+    assert [
+             %{
+               window_id: "w1",
+               session: "soco",
+               panes: [%{block: "b1", pid: 100}, %{block: "b2"}, %{block: "b3", app: nil}]
+             }
+           ] =
+             a.tabs
+
+    assert a.blocks == MapSet.new(["b1", "b2", "b3", "d1", "d2"])
   end
 end

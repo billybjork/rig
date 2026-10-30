@@ -23,6 +23,10 @@ be copied between repositories lives here.
   shows); `rex/background.lua` adds the palette's "Background: Show" (a
   picker when there are several) and "Background: Hide This Pane". `bin/` is
   on Billy's PATH (`~/.zshrc`).
+- "Recently Closed" (palette, Shift+Cmd+T; `rex/closed.lua`, `bin/closed`)
+  reopens a tab or pane that closed lately as a new tab in its session, each
+  pane at its directory and a Claude pane as `claude --resume`. rigd's
+  `Closed` records them in `~/.local/state/rig/closed.jsonl`.
 - `agents/skills/` holds the skills every project shares, each linked into
   `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
 - `rigd/` is the daemon (Elixir, a KeepAlive LaunchAgent `com.billy.rigd`;
@@ -38,7 +42,8 @@ be copied between repositories lives here.
   one ntfy push per agent that finishes (or waits on Billy) while he is
   away, on `NTFY_TOPIC` from `rigd/fnox.toml` (deploy tier, key
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
-  has a background shell. `Fleet` keeps the shared pool of gate Sprites
+  has a background shell. `Closed` records each tab and pane that closes, with
+  its Claude session, for "Recently Closed". `Fleet` keeps the shared pool of gate Sprites
   that `gate/fleet.json` names golden and leases them to gates on a Unix
   socket (`gate/FLEET.md`). `bin/rigd status` shows what it sees and
   `bin/rigd fleet` the pool; the decisions are tested (`mix check` in

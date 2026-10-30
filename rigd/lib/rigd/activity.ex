@@ -10,8 +10,10 @@ defmodule Rigd.Activity do
 
   `state.items` maps a key to `%{kind, label}`; `state.agents` lists every
   agent Rex shows, whatever its state, with its tab, and `state.windows`
-  every tab, for Notify and RexBadges; `state.rex_ok` is false when Rex
-  could not be read this tick.
+  every tab, for Notify and RexBadges; `state.tabs` each tab with its panes
+  (directory, title, agent) and `state.blocks` every block Rex has, tab or
+  background, for Closed; `state.rex_ok` is false when Rex could not be read
+  this tick.
   """
 
   use GenServer
@@ -94,10 +96,35 @@ defmodule Rigd.Activity do
           w <- s["windows"],
           do: %{session_id: s["id"], window_id: w["id"], label: w["label"]}
 
+    tabs =
+      for s <- sessions, w <- s["windows"] do
+        panes =
+          for b <- w["blocks"], !b["floating"] do
+            a = b["agent"] || %{}
+            %{block: b["id"], cwd: b["cwd"], title: b["title"], app: a["app"], pid: a["pid"]}
+          end
+
+        %{
+          session_id: s["id"],
+          session: s["label"],
+          window_id: w["id"],
+          label: w["label"],
+          panes: panes
+        }
+      end
+
+    blocks =
+      for s <- sessions,
+          b <- Enum.flat_map(s["windows"], & &1["blocks"]) ++ s["detached"],
+          into: MapSet.new(),
+          do: b["id"]
+
     %{
       items: items,
       agents: agents,
       windows: windows,
+      tabs: tabs,
+      blocks: blocks,
       shell_owners: MapSet.new(shells, &elem(&1, 1))
     }
   end
