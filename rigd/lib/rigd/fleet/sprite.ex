@@ -19,9 +19,12 @@ defmodule Rigd.Fleet.Sprite do
       three Sprites provision at a time. A provision the Sprite fails is tried
       once more, then the Sprite is rebuilt (destroyed and created again).
 
-  A part it failed or crashed is a strike; three in a day retire it: it is
-  destroyed and built again under the same name (Billy: Sprites are
-  disposable, never investigated). A restore that never reached the Sprite
+  A strike is a native crash, or a part it failed right after another it
+  failed (the same Sprite failing every part); three in a day retire it: it
+  is destroyed and built again under the same name (Billy: Sprites are
+  disposable, never investigated). A restart is not a strike: restarts are
+  platform events, as likely on any Sprite (110 on 2026-10-29 and 30, with
+  no pressure, pattern or host in common). A restore that never reached the Sprite
   (the laptop offline, the API down) is tried again each minute: a rebuild
   then would throw away a good golden checkpoint, as an outage did to the
   whole pool (2026-10-30). One the Sprite refused rebuilds it.
@@ -48,7 +51,11 @@ defmodule Rigd.Fleet.Sprite do
   @doc "Leases it to `holder` (a pid) for `project` when idle: `:ok` or `{:error, status}`."
   def lease(name, holder, project), do: GenServer.call(via(name), {:lease, holder, project})
 
-  @doc "The holder's verdict: `green`, `red`, `failed` (the Sprite failed the part), `crashed`."
+  @doc """
+  The holder's verdict: `green`, `red`, `restarted` (the Sprite restarted
+  or went unreachable mid-part), `failed` (the Sprite failed the part
+  otherwise), `crashed` (a native crash).
+  """
   def release(name, holder, result), do: GenServer.call(via(name), {:release, holder, result})
 
   @doc "Back to its golden checkpoint, when idle (nightly)."
@@ -108,6 +115,8 @@ defmodule Rigd.Fleet.Sprite do
       holder: nil,
       served: [],
       strikes: [],
+      # Whether the last part it held ended `failed`.
+      failed_last: false,
       failures: 0,
       task: nil,
       # The provision waiting for its turn: {:provision, create?}.
@@ -129,14 +138,22 @@ defmodule Rigd.Fleet.Sprite do
 
   def handle_call({:release, holder, result}, _from, %{holder: {holder, ref}} = st) do
     Process.demonitor(ref, [:flush])
-    st = %{st | holder: nil}
+
+    failed_last = st.failed_last
+    st = %{st | holder: nil, failed_last: result == "failed"}
 
     st =
-      if result in ["failed", "crashed"] do
-        Logger.warning("fleet: #{st.name} #{result} a part; a strike")
-        struck(st)
-      else
-        tell(%{st | status: :idle})
+      cond do
+        result == "crashed" or (result == "failed" and failed_last) ->
+          Logger.warning("fleet: #{st.name} #{result} a part; a strike")
+          struck(st)
+
+        result in ["failed", "restarted"] ->
+          Logger.info("fleet: #{st.name} #{result} a part; no strike")
+          work(st, :restoring, :restore)
+
+        true ->
+          tell(%{st | status: :idle})
       end
 
     {:reply, :ok, st}

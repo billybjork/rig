@@ -31,7 +31,7 @@ defmodule Gate.Lease do
     spawn_link(fn -> hold(owner, project, part, key) end)
   end
 
-  @doc "Gives the Sprite back with the part's `result`: green, red, failed or crashed."
+  @doc "Gives the Sprite back with the part's `result`: green, red, restarted, failed or crashed."
   def release(pid, result) do
     ref = Process.monitor(pid)
     send(pid, {:release, result})

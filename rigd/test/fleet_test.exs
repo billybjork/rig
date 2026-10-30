@@ -187,28 +187,47 @@ defmodule Rigd.FleetTest do
     until(fn -> status("rig-gate-1") == :idle end)
   end
 
-  test "a part the Sprite failed restores its golden checkpoint; a third strike in a day replaces it",
+  defp part(opts, result) do
+    a = lease(opts, "proj", ["rig-gate-1"])
+    assert recv(a) == %{"granted" => "rig-gate-1"}
+    send_line(a, %{release: %{sprite: "rig-gate-1", result: result}})
+    assert recv(a) == %{"released" => "rig-gate-1"}
+    until(fn -> status("rig-gate-1") == :idle end)
+    :gen_tcp.close(a)
+  end
+
+  defp strikes(name), do: Fleet.status().sprites[name].strikes
+
+  test "a crash is a strike, and a failure right after a failure; a third strike in a day replaces it",
        %{root: root, opts: opts} do
     golden_sprite(root, "rig-gate-1", @stamp)
     start(opts)
     until(fn -> status("rig-gate-1") == :idle end)
 
-    for n <- 1..3 do
-      a = lease(opts, "proj", ["rig-gate-1"])
-      assert recv(a) == %{"granted" => "rig-gate-1"}
+    part(opts, "crashed")
+    assert strikes("rig-gate-1") == 1
+    part(opts, "failed")
+    assert strikes("rig-gate-1") == 1
+    part(opts, "green")
+    part(opts, "failed")
+    assert strikes("rig-gate-1") == 1
+    part(opts, "failed")
+    assert strikes("rig-gate-1") == 2
+    part(opts, "failed")
 
-      send_line(a, %{
-        release: %{sprite: "rig-gate-1", result: if(n == 2, do: "crashed", else: "failed")}
-      })
-
-      assert recv(a) == %{"released" => "rig-gate-1"}
-      until(fn -> status("rig-gate-1") == :idle end)
-      :gen_tcp.close(a)
-    end
-
-    assert length(String.split(calls(root), "checkpoint restore v1 -s rig-gate-1")) == 3
     assert calls(root) =~ "destroy --force -s rig-gate-1"
-    assert Fleet.status().sprites["rig-gate-1"].strikes == 0
+    assert strikes("rig-gate-1") == 0
+  end
+
+  test "a restart releases the Sprite without a strike", %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    start(opts)
+    until(fn -> status("rig-gate-1") == :idle end)
+
+    for _ <- 1..4, do: part(opts, "restarted")
+
+    assert strikes("rig-gate-1") == 0
+    refute calls(root) =~ "destroy"
   end
 
   test "a restore that never reached the Sprite is tried again, not rebuilt",

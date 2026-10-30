@@ -29,7 +29,8 @@ defmodule Gate.Engine do
   On the shared pool (a job assigned `:lease`), each part, its first run
   and its rerun alike, waits for a Sprite leased from rigd's `Fleet`
   (`Gate.Lease`) and gives it back as it ends, saying how: `green`, `red`,
-  `failed` (the Sprite failed it) or `crashed`. A part reruns on whichever
+  `restarted` (its Sprite restarted or went unreachable), `failed` (the
+  Sprite failed it otherwise) or `crashed`. A part reruns on whichever
   Sprite `Fleet` leases next, any project's. `Fleet` going mid-gate
   leaves no verdict.
 
@@ -283,7 +284,14 @@ defmodule Gate.Engine do
 
       {:error, why} ->
         if now() - part.last_ok > limits["unreachable"] * 1000,
-          do: failed(ctx, state, part, "unreachable for #{limits["unreachable"]} s: #{why}"),
+          do:
+            failed(
+              ctx,
+              state,
+              part,
+              "unreachable for #{limits["unreachable"]} s: #{why}",
+              "restarted"
+            ),
           else: state
 
       {:ok, sprite_state, bytes} ->
@@ -323,7 +331,13 @@ defmodule Gate.Engine do
         relaunch(ctx, state, %{part | warm_relaunched: true})
 
       s["life"] not in [nil, "", part.life] ->
-        failed(ctx, state, part, "it restarted mid-part (life #{part.life}, now #{s["life"]})")
+        failed(
+          ctx,
+          state,
+          part,
+          "it restarted mid-part (life #{part.life}, now #{s["life"]})",
+          "restarted"
+        )
 
       s["rc"] not in [nil, ""] ->
         ended(ctx, state, part, String.to_integer(s["rc"]))
@@ -389,15 +403,18 @@ defmodule Gate.Engine do
     end
   end
 
-  defp failed(ctx, state, part, why) do
+  # `how` is what `Fleet` hears: `restarted` (the Sprite restarted or went
+  # unreachable, a platform event that says nothing of the Sprite) or
+  # `failed`.
+  defp failed(ctx, state, part, why, how \\ "failed") do
     note(part, "#{part.sprite} failed: #{why}")
 
     if part.reran_from == nil do
       ctx.say.("#{part.job.name}: #{part.sprite} failed (#{why})")
-      rerun(ctx, state, part, nil, "#{part.sprite} failed", "failed")
+      rerun(ctx, state, part, nil, "#{part.sprite} failed", how)
     else
       ctx.say.("#{part.job.name}: #{part.sprite} failed: #{why}")
-      give_back(part, "failed")
+      give_back(part, how)
       done(ctx, state, part, :sprite_failed, nil, why)
     end
   end

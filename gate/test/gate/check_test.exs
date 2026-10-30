@@ -402,6 +402,14 @@ defmodule Gate.CheckTest do
       Gate.FakeFleet.stop(fleet)
     end
 
+    test "a part whose Sprite restarted is given back as restarted, not failed", env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
+      {status, _out, err} = check(env, [{"static", "bash cmd.sh restart-once"}])
+      assert status == 0, err
+      assert [{"gate-1", "restarted"}, {_, "green"}] = Gate.FakeFleet.released(fleet)
+      Gate.FakeFleet.stop(fleet)
+    end
+
     test "no verdict when rigd's Fleet does not answer", env do
       System.put_env("GATE_FLEET_SOCKET", "/nonexistent/fleet.sock")
       Fake.parts(env.top, [{"static", "bash cmd.sh green"}])

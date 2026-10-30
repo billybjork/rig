@@ -12,8 +12,9 @@ defmodule Rigd.Fleet.Socket do
 
   Each connection is a process, and it holds what it leased: a gate that
   dies closes its connection, and the Sprite it held ends its parts before
-  it is leased again. `result` is `green` or `red` (the part ran), `failed`
-  (the Sprite failed it) or `crashed` (a native crash).
+  it is leased again. `result` is `green` or `red` (the part ran), `restarted`
+  (its Sprite restarted or went unreachable), `failed` (the Sprite failed
+  it otherwise) or `crashed` (a native crash).
   """
 
   use GenServer
@@ -81,7 +82,7 @@ defmodule Rigd.Fleet.Socket do
   end
 
   defp handle(sock, %{"release" => %{"sprite" => sprite, "result" => result}}, sprite)
-       when result in ~w(green red failed crashed) do
+       when result in ~w(green red restarted failed crashed) do
     case Rigd.Fleet.release(sprite, self(), result) do
       :ok -> reply(sock, %{released: sprite})
       {:error, why} -> reply(sock, %{error: "#{why}"})
