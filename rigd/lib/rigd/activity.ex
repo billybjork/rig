@@ -96,37 +96,43 @@ defmodule Rigd.Activity do
           w <- s["windows"],
           do: %{session_id: s["id"], window_id: w["id"], label: w["label"]}
 
-    tabs =
-      for s <- sessions, w <- s["windows"] do
-        panes =
-          for b <- w["blocks"], !b["floating"] do
-            a = b["agent"] || %{}
-            %{block: b["id"], cwd: b["cwd"], title: b["title"], app: a["app"], pid: a["pid"]}
-          end
-
-        %{
-          session_id: s["id"],
-          session: s["label"],
-          window_id: w["id"],
-          label: w["label"],
-          panes: panes
-        }
-      end
-
-    blocks =
-      for s <- sessions,
-          b <- Enum.flat_map(s["windows"], & &1["blocks"]) ++ s["detached"],
-          into: MapSet.new(),
-          do: b["id"]
-
     %{
       items: items,
       agents: agents,
       windows: windows,
-      tabs: tabs,
-      blocks: blocks,
+      tabs: tabs(sessions),
+      blocks: blocks(sessions),
       shell_owners: MapSet.new(shells, &elem(&1, 1))
     }
+  end
+
+  @doc """
+  Each tab with its tiled panes (directory, title, agent), for Closed.
+  """
+  def tabs(sessions) do
+    for s <- sessions, w <- s["windows"] do
+      panes =
+        for b <- w["blocks"], !b["floating"] do
+          a = b["agent"] || %{}
+          %{block: b["id"], cwd: b["cwd"], title: b["title"], app: a["app"], pid: a["pid"]}
+        end
+
+      %{
+        session_id: s["id"],
+        session: s["label"],
+        window_id: w["id"],
+        label: w["label"],
+        panes: panes
+      }
+    end
+  end
+
+  @doc "Every block Rex has, in a tab or in the background."
+  def blocks(sessions) do
+    for s <- sessions,
+        b <- Enum.flat_map(s["windows"], & &1["blocks"]) ++ s["detached"],
+        into: MapSet.new(),
+        do: b["id"]
   end
 
   defp agents(sessions) do

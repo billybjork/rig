@@ -1,22 +1,29 @@
 defmodule Rigd.Closed do
   @moduledoc """
-  The palette's "Recently Closed" (`rex/closed.lua`, `bin/closed`): each
-  Activity's tabs are compared with the last, and a tab or pane that is gone
-  is appended to `~/.local/state/rig/closed.jsonl`, one JSON line each,
+  The palette's "Recently Closed" (`rex/closed.lua`, `bin/closed`): Rex's
+  tabs are compared with the last look at them, and a tab or pane that is
+  gone is appended to `~/.local/state/rig/closed.jsonl`, one JSON line each,
   newest last. A line holds what reopening it needs: its session, its tab's
   label, and each pane's directory, title, and Claude Code session (with
   whether it skipped permissions), read from `~/.claude/sessions/<pid>.json`
   while the agent still runs.
 
   A pane that leaves its tab without closing (Background: Hide, a move to
-  another tab) is not closed. A tick on which Rex could not be read is
+  another tab) is not closed. A look on which Rex could not be read is
   skipped, so an outage does not read as every tab closing.
+
+  Rex is looked at on each Activity tick and also as soon as a tab or pane
+  opens or closes (`priv/events.lua`, run with `rex do --all`), since a tab
+  open for less than a tick falls between two ticks. Two looks can arrive
+  out of order, so a pane once recorded is never recorded again.
   """
 
   use GenServer
   require Logger
 
   @keep 200
+  # Events come in bursts (a tab closing closes its panes): one look each.
+  @settle 150
 
   def path, do: Path.expand("~/.local/state/rig/closed.jsonl")
 
@@ -26,24 +33,80 @@ defmodule Rigd.Closed do
   def init(nil) do
     Rigd.Bus.subscribe(:activity)
     File.mkdir_p!(Path.dirname(path()))
-    {:ok, %{tabs: nil, claude: %{}}}
+    send(self(), :listen)
+    {:ok, %{tabs: nil, claude: %{}, written: MapSet.new(), events: nil, look: nil}}
   end
 
   @impl true
   def handle_info({:activity, %{rex_ok: false}}, st), do: {:noreply, st}
+  def handle_info({:activity, a}, st), do: {:noreply, look(a.tabs, a.blocks, st)}
 
-  def handle_info({:activity, a}, st) do
-    claude = claude_sessions(a.tabs, st.claude)
-    tabs = for t <- a.tabs, do: %{t | panes: Enum.map(t.panes, &with_claude(&1, claude))}
+  def handle_info(:listen, st) do
+    script = Path.join(:code.priv_dir(:rigd), "events.lua")
 
-    if st.tabs do
-      case closed(st.tabs, tabs, a.blocks) do
-        [] -> :ok
-        gone -> write(gone, DateTime.utc_now() |> DateTime.truncate(:second))
-      end
+    case System.find_executable("rex") do
+      nil ->
+        Process.send_after(self(), :listen, :timer.seconds(30))
+        {:noreply, st}
+
+      rex ->
+        port =
+          Port.open({:spawn_executable, rex}, [
+            :binary,
+            :exit_status,
+            {:line, 1024},
+            args: ["--autostart=false", "do", "--all", script]
+          ])
+
+        {:noreply, %{st | events: port}}
     end
+  end
 
-    {:noreply, %{st | tabs: tabs, claude: claude}}
+  def handle_info({port, {:data, _}}, %{events: port} = st) do
+    {:noreply, %{st | look: st.look || Process.send_after(self(), :look, @settle)}}
+  end
+
+  # Rex restarted or went away: listen again shortly, and meanwhile ticks.
+  def handle_info({port, {:exit_status, status}}, %{events: port} = st) do
+    Logger.info("closed: event listener exited #{status}; again in 10 s")
+    Process.send_after(self(), :listen, :timer.seconds(10))
+    {:noreply, %{st | events: nil}}
+  end
+
+  def handle_info(:look, st) do
+    st = %{st | look: nil}
+
+    case Rigd.Rex.snapshot() do
+      {:ok, sessions} ->
+        {:noreply, look(Rigd.Activity.tabs(sessions), Rigd.Activity.blocks(sessions), st)}
+
+      {:error, _} ->
+        {:noreply, st}
+    end
+  end
+
+  def handle_info(_, st), do: {:noreply, st}
+
+  defp look(tabs, blocks, st) do
+    claude = claude_sessions(tabs, st.claude)
+    tabs = for t <- tabs, do: %{t | panes: Enum.map(t.panes, &with_claude(&1, claude))}
+
+    gone = if st.tabs, do: st.tabs |> closed(tabs, blocks) |> unseen(st.written), else: []
+    if gone != [], do: write(gone, DateTime.utc_now() |> DateTime.truncate(:second))
+
+    written =
+      gone
+      |> Enum.flat_map(fn g -> Enum.map(g.panes, & &1.block) end)
+      |> Enum.into(st.written)
+      |> forget_old()
+
+    %{st | tabs: tabs, claude: claude, written: written}
+  end
+
+  # Block IDs are never reused, so any old ones may go; enough are kept to
+  # outlast a look that arrives late.
+  defp forget_old(written) do
+    if MapSet.size(written) > 1000, do: MapSet.new(Enum.take(written, -500)), else: written
   end
 
   @doc """
@@ -60,6 +123,14 @@ defmodule Rigd.Closed do
       kind = if MapSet.member?(open, t.window_id), do: "pane", else: "tab"
       t |> Map.put(:kind, kind) |> Map.put(:panes, panes)
     end
+  end
+
+  @doc "`closed/3`'s records without the panes already recorded."
+  def unseen(gone, written) do
+    for g <- gone,
+        panes = Enum.reject(g.panes, &MapSet.member?(written, &1.block)),
+        panes != [],
+        do: %{g | panes: panes}
   end
 
   # pid => %{id, skip_permissions} for every Claude Code agent in a tab. The

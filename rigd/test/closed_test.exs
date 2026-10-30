@@ -34,4 +34,11 @@ defmodule Rigd.ClosedTest do
     tabs = [tab("w1", [pane("b1")])]
     assert Closed.closed(tabs, tabs, MapSet.new(["b1"])) == []
   end
+
+  test "a pane already recorded, seen again by a look that came late, is not recorded twice" do
+    gone = [Map.put(tab("w1", [pane("b1"), pane("b2")]), :kind, "tab")]
+
+    assert [%{panes: [%{block: "b2"}]}] = Closed.unseen(gone, MapSet.new(["b1"]))
+    assert Closed.unseen(gone, MapSet.new(["b1", "b2"])) == []
+  end
 end
