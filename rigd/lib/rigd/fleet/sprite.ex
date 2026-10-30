@@ -269,9 +269,12 @@ defmodule Rigd.Fleet.Sprite do
     end)
   end
 
-  defp done(st, :check, {:ok, %{} = golden}), do: tell(%{st | status: :idle, golden: golden})
-  defp done(st, :check, {:ok, :missing}), do: provision(st, true)
-  defp done(st, :check, {:ok, nil}), do: provision(st, false)
+  # A check that went through clears the last call's failure from the status.
+  defp done(st, :check, {:ok, %{} = golden}),
+    do: tell(%{st | status: :idle, golden: golden, why: nil})
+
+  defp done(st, :check, {:ok, :missing}), do: provision(%{st | why: nil}, true)
+  defp done(st, :check, {:ok, nil}), do: provision(%{st | why: nil}, false)
 
   defp done(st, step, {:error, why}) when step in [:check, :end_parts, :rebuild] do
     Logger.warning("fleet: #{st.name} #{step}: #{why}; again in a minute")
@@ -280,7 +283,7 @@ defmodule Rigd.Fleet.Sprite do
 
   defp done(st, :end_parts, :ok), do: tell(%{st | status: :idle})
 
-  defp done(st, :restore, :ok), do: tell(%{st | status: :idle, served: []})
+  defp done(st, :restore, :ok), do: tell(%{st | status: :idle, served: [], why: nil})
 
   defp done(st, :restore, {:error, why}) do
     if why =~ @unreached do
@@ -292,7 +295,7 @@ defmodule Rigd.Fleet.Sprite do
     end
   end
 
-  defp done(st, :rebuild, :ok), do: provision(%{st | golden: nil, served: []}, false)
+  defp done(st, :rebuild, :ok), do: provision(%{st | golden: nil, served: [], why: nil}, false)
 
   defp done(st, {:provision, _}, {:golden, golden}) do
     Logger.info("fleet: #{st.name} golden (#{golden.id}: #{golden_comment(golden.stamps)})")

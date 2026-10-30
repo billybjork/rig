@@ -228,6 +228,17 @@ defmodule Rigd.FleetTest do
     assert status("rig-gate-1") == :restoring
     refute calls(root) =~ "destroy"
     assert Fleet.status().sprites["rig-gate-1"].stamps == %{"proj" => @stamp}
+
+    # Back online: the retry restores it, and the failure leaves its status.
+    File.rm!(Path.join(root, "offline"))
+
+    send(
+      GenServer.whereis({:via, Registry, {Rigd.Fleet.Registry, "rig-gate-1"}}),
+      {:again, :restore}
+    )
+
+    until(fn -> status("rig-gate-1") == :idle end)
+    assert Fleet.status().sprites["rig-gate-1"].why == nil
   end
 
   test "a provision the Sprite fails is tried once more, then the Sprite is rebuilt",
