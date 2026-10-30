@@ -144,9 +144,9 @@ if [ ${#WARM_NAMES[@]} -gt 0 ]; then
     keyfile=~/.gate-warm/$NAME-$name
     [ ! -e ~/.gate-warm/"$name" ] || mv ~/.gate-warm/"$name" "$keyfile"
     [ "$(cat "$keyfile" 2>/dev/null)" != "$key" ] || continue
-    # A golden run's seed (gate/lib/gate/engine.ex, seed/2), for a Sprite
-    # that never built this cache: the build then only checks it.
-    if [ ! -e "$keyfile" ] && [ -f "$d/seed-$name.tar" ]; then
+    # A golden run's seed (gate/lib/gate/engine.ex, seed/2): whole where
+    # this Sprite's may be half built, so the build then only checks it.
+    if [ -f "$d/seed-$name.tar" ]; then
       tar -xf "$d/seed-$name.tar" -C ~ && say "seeded $name" || say "seeding $name failed"
     fi
     say "warming $name (key $key)"

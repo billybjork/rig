@@ -154,7 +154,7 @@ defmodule Gate.CommandsTest do
            %{"name" => "plt", "parts" => ["one"], "key" => ["cmd.sh"], "command" => "ls seeded"}
          ]
        }
-  test "golden: a warm cache with a seed on the laptop starts from it on a Sprite that never built it",
+  test "golden: a warm cache with a seed on the laptop starts from it",
        env do
     seeds = Path.join(env.tmp, "seeds")
     stage = Path.join(env.tmp, "seed")

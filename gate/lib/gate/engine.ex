@@ -223,7 +223,7 @@ defmodule Gate.Engine do
   @doc """
   The laptop's seed for a project's warm cache: a tar of what the cache
   builds, from the Sprite's home (`soco/priv/plts/…`, `.mix/…`), which a
-  Sprite that never built the cache unpacks before building it. Under
+  golden run's Sprite unpacks before building it. Under
   `$GATE_SEED`, else `~/.cache/gate-seed`, as `<project>/<warm>.tar`.
   """
   def seed(config, warm) do

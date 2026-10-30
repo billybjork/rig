@@ -9,7 +9,7 @@ defmodule Gate.Golden do
   failed it runs there once more.
 
   A warm cache with a seed on the laptop (`Gate.Engine.seed/2`) starts
-  from it on a Sprite that never built it: a cold soco PLT took the
+  from it whenever its key is not the one built there: a cold soco PLT took the
   Sprite down mid-build on every try for a day (2026-10-30), and only a
   golden Sprite ever had one.
 
