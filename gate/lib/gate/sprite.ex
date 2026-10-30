@@ -128,9 +128,13 @@ defmodule Gate.Sprite do
   @doc """
   The life in a whole "gate-launched <life>" line of the TTY's output,
   else nil. The output comes in chunks, and a chunk can end inside the
-  line; a life read short would look like a restart at the first poll.
+  line; a life read short would look like a restart at the first poll. The
+  TTY's terminal-mode sequences (`ESC[?1004s`) can land inside the line, and
+  are dropped: kept, they made a life no poll matched (2026-10-29).
   """
   def launched(seen) do
+    seen = Regex.replace(~r/\e(\[[0-9;?<=>]*[ -\/]*[@-~]|\][^\a\e]*(\a|\e\\))/, seen, "")
+
     case Regex.run(~r/gate-launched (\S+)\r?\n/, seen) do
       [_, life] -> life
       nil -> nil
