@@ -26,7 +26,9 @@ list() {
         elif $s < 3600 then "\($s / 60 | floor)m ago"
         elif $s < 86400 then "\($s / 3600 | floor)h ago"
         else "\($s / 86400 | floor)d ago" end;
-    def name: [.panes[].title // empty][0] // (.label | sub("^⚙ "; "")) ;
+    def name: [.panes[].title // empty][0]
+      // ([.panes[].cwd // empty][0] | values | sub("^" + env.HOME; "~"))
+      // (.label | sub("^⚙ "; ""));
     def extra: (.panes | length) as $n
       | if $n > 1 then " (\($n) panes)" elif .kind == "pane" then " (pane)" else "" end;
     to_entries[] | .value as $r
