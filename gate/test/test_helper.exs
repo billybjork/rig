@@ -6,7 +6,8 @@ defmodule Gate.Fake do
   `<root>/<sprite>/home` is a Sprite's home, `~/.life` its life. An exec
   runs there; a TTY exec runs in a session of its own that outlives its
   client, as a real one does. A Sprite with a `down` file answers nothing
-  ("Error: connection closed"). Checkpoints go to `<sprite>/checkpoints`.
+  ("Error: connection closed"); one with `tty-silent` runs a TTY exec but
+  shows none of its output. Checkpoints go to `<sprite>/checkpoints`.
   """
 
   import ExUnit.Assertions
@@ -38,6 +39,7 @@ defmodule Gate.Fake do
     out=$root/$s/tty-$$.out
     : >"$out"
     setsid "$@" >"$out" 2>&1 </dev/null &
+    [ ! -e "$root/$s/tty-silent" ] || exec sleep 600
     exec tail -f "$out"
   fi
   exec "$@"

@@ -104,6 +104,20 @@ defmodule Gate.CheckTest do
              ~r/static:\d+:gate-3:green:reran-from-gate-1\ttest-1:\d+:gate-3:green:reran-from-gate-2$/
   end
 
+  @tag gate: %{"limits" => %{"poll" => 0.1, "launch" => 2}}
+  test "a launch whose line never came through but whose job runs is launched, not a failed Sprite",
+       env do
+    File.touch!(Path.join(env.root, "gate-1/tty-silent"))
+
+    {status, _out, err} =
+      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+    assert status == 0, err
+    refute err =~ "failed"
+    [row] = Fake.rows(env.logs)
+    assert row =~ ~r/static:\d+:gate-1:green\t/
+  end
+
   test "no verdict when a part's rerun fails too: neither green nor red", env do
     File.touch!(Path.join(env.root, "gate-2/down"))
     File.touch!(Path.join(env.root, "gate-3/down"))

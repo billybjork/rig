@@ -82,6 +82,11 @@ defmodule Gate.Sprite do
   launched. Returns `{:ok, life}`, the Sprite's life as the part began.
   A TTY wants a terminal, which a gate under the ship worker lacks, so the
   client runs under `script`.
+
+  A launch whose line never came through is asked of the Sprite: a job
+  that began there (or, for `keep`, a keeper that runs) launched. The line was lost
+  in the TTY's output twice in an hour while its part ran on (2026-10-30),
+  and the gate counted the Sprite failed and ran the part again elsewhere.
   """
   def launch(sprite, id, mode, secs) do
     launch = ~S|exec bash ~/parts/"$1"/launch.sh "$@"|
@@ -102,8 +107,22 @@ defmodule Gate.Sprite do
       ])
 
     {:os_pid, pid} = Port.info(port, :os_pid)
-    await_launch(port, pid, "")
+
+    with {:error, why} <- await_launch(port, pid, "") do
+      case poll(sprite, id, 0, 30) do
+        {:ok, %{"life" => life} = state, _} when is_map(state) ->
+          if launched_there?(state, mode), do: {:ok, life}, else: {:error, why}
+
+        _ ->
+          {:error, why}
+      end
+    end
   end
+
+  # A job that began writes its phase (launch.sh clears it first); a keeper
+  # only runs.
+  defp launched_there?(state, "keep"), do: state["keeper"] == "up"
+  defp launched_there?(state, _), do: state["job"] == "up" or state["phase"] not in [nil, ""]
 
   defp await_launch(port, pid, seen) do
     receive do
@@ -129,11 +148,17 @@ defmodule Gate.Sprite do
   The life in a whole "gate-launched <life>" line of the TTY's output,
   else nil. The output comes in chunks, and a chunk can end inside the
   line; a life read short would look like a restart at the first poll. The
-  TTY's terminal-mode sequences (`ESC[?1004s`) can land inside the line, and
-  are dropped: kept, they made a life no poll matched (2026-10-29).
+  TTY's terminal-mode sequences (`ESC[?1004s`, `ESC=`, `ESC(B`) can land
+  inside the line, and are dropped: kept, they made a life no poll matched
+  (2026-10-29).
   """
   def launched(seen) do
-    seen = Regex.replace(~r/\e(\[[0-9;?<=>]*[ -\/]*[@-~]|\][^\a\e]*(\a|\e\\))/, seen, "")
+    seen =
+      Regex.replace(
+        ~r/\e(\[[0-9;?<=>]*[ -\/]*[@-~]|\][^\a\e]*(\a|\e\\)|[()*+][0-9A-Za-z]|[=>78DEHMNOZc])/,
+        seen,
+        ""
+      )
 
     case Regex.run(~r/gate-launched (\S+)\r?\n/, seen) do
       [_, life] -> life
