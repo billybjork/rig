@@ -136,7 +136,14 @@ defmodule Gate.Sprite do
             {:ok, life}
 
           nil ->
-            await_launch(port, pid, String.slice(seen, -4000, 4000))
+            # launch.sh prints dots only after its line: the line was lost.
+            if seen =~ ~r/\n\.\r?\n/ do
+              System.cmd("kill", ["-TERM", to_string(pid)])
+              drain(port)
+              {:error, "the launch line was lost: #{last_line(seen)}"}
+            else
+              await_launch(port, pid, String.slice(seen, -4000, 4000))
+            end
         end
 
       {^port, {:exit_status, status}} ->

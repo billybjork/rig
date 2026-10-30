@@ -118,6 +118,18 @@ defmodule Gate.CheckTest do
     assert row =~ ~r/static:\d+:gate-1:green\t/
   end
 
+  @tag gate: %{"limits" => %{"poll" => 0.1, "launch" => 60}}
+  test "a launch line lost among the keeper's dots is read from the Sprite at the first dot",
+       env do
+    File.touch!(Path.join(env.root, "gate-1/tty-lossy"))
+    parts = [{"static", "bash cmd.sh sleep 6"}, {"test-1", "bash cmd.sh green"}]
+    t0 = System.monotonic_time(:second)
+    {status, _out, err} = check(env, parts)
+    assert status == 0, err
+    refute err =~ "failed"
+    assert System.monotonic_time(:second) - t0 < 30
+  end
+
   test "no verdict when a part's rerun fails too: neither green nor red", env do
     File.touch!(Path.join(env.root, "gate-2/down"))
     File.touch!(Path.join(env.root, "gate-3/down"))

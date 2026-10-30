@@ -37,4 +37,5 @@ case "$1" in
     echo built ;;
   cat) cat "$2" ;;
   exit) exit "$2" ;;
+  sleep) sleep "$2"; echo "slept" ;;
 esac
