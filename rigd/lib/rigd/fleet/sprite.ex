@@ -11,7 +11,8 @@ defmodule Rigd.Fleet.Sprite do
       holder that goes without releasing it leaves parts running, which
       are ended before it is idle again.
     * `restoring`: back to its golden checkpoint (about 30 s), after a
-      part it failed or crashed, and nightly.
+      strike (a crash) and nightly; not after a part it failed or that
+      its restart cost, which only ends what the part left running.
     * `waiting`, then `provisioning`: made golden: created when missing, then every
       project's setup (`gate golden`, `Rigd.Fleet.Golden`) and a
       checkpoint whose comment names each project's stamp (`golden soco
@@ -160,9 +161,12 @@ defmodule Rigd.Fleet.Sprite do
           Logger.warning("fleet: #{st.name} #{result} a part; a strike")
           struck(st)
 
+        # Its build caches stay: a restore would drop them for the next
+        # part to build again, and a half-built app build is dropped by
+        # the next part itself (`job.sh`). What the part left running ends.
         result in ["failed", "restarted"] ->
           Logger.info("fleet: #{st.name} #{result} a part; no strike")
-          work(st, :restoring, :restore)
+          work(st, :leased, :end_parts)
 
         true ->
           tell(%{st | status: :idle})

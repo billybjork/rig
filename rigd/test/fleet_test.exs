@@ -230,6 +230,20 @@ defmodule Rigd.FleetTest do
 
     assert strikes("rig-gate-1") == 0
     refute calls(root) =~ "destroy"
+    refute calls(root) =~ "restore"
+  end
+
+  test "only a strike restores the golden checkpoint, not a part the Sprite failed",
+       %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    start(opts)
+    until(fn -> status("rig-gate-1") == :idle end)
+
+    part(opts, "failed")
+    refute calls(root) =~ "restore"
+    assert calls(root) =~ "-s rig-gate-1 exec -- bash -c"
+    part(opts, "crashed")
+    assert calls(root) =~ "checkpoint restore v1 -s rig-gate-1"
   end
 
   test "a restore that never reached the Sprite is tried again, not rebuilt",
@@ -241,7 +255,7 @@ defmodule Rigd.FleetTest do
 
     a = lease(opts, "proj", ["rig-gate-1"])
     assert recv(a) == %{"granted" => "rig-gate-1"}
-    send_line(a, %{release: %{sprite: "rig-gate-1", result: "failed"}})
+    send_line(a, %{release: %{sprite: "rig-gate-1", result: "crashed"}})
     assert recv(a) == %{"released" => "rig-gate-1"}
 
     until(fn -> (Fleet.status().sprites["rig-gate-1"].why || "") =~ "no such host" end)

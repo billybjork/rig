@@ -79,9 +79,14 @@ git bundle stays small and the build caches warm; `Fleet` grants one of
 them when it is idle, else one that served the project since its last
 restore, else any idle Sprite.
 
-`result`: `green` or `red` returns the Sprite idle. `failed` (the Sprite
-failed the part) and `crashed` (a native crash) restore its golden
-checkpoint (about 30 s) before it is idle again and count a strike; three
+`result`: `green` or `red` returns the Sprite idle. `restarted` (its
+Sprite restarted or went unreachable) and `failed` (the Sprite failed the
+part otherwise) end what the part left running and return it idle with
+its build caches; neither is a strike, but a `failed` right after a
+`failed` is (Billy, 2026-10-30: restarts are platform events, and a
+restore threw away the caches the next part needed). `crashed` (a native
+crash) is a strike and restores its golden checkpoint (about 30 s) before
+it is idle again; three
 strikes in a day retire it, and `Fleet` builds a replacement (create,
 provision, every project's setup, checkpoint) while the pool runs
 one short. Billy's rule: Sprites are disposable, so a retired one is
