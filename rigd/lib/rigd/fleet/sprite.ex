@@ -16,12 +16,15 @@ defmodule Rigd.Fleet.Sprite do
       project's provision gate (`gate golden`, `Rigd.Fleet.Golden`) and a
       checkpoint whose comment names each project's stamp (`golden soco
       13545dd5… heaters 7d1c…`). It waits for its turn (`Rigd.Fleet.turn/2`):
-      one Sprite provisions at a time. A provision the Sprite fails is tried
+      three Sprites provision at a time. A provision the Sprite fails is tried
       once more, then the Sprite is rebuilt (destroyed and created again).
 
   A part it failed or crashed is a strike; three in a day retire it: it is
   destroyed and built again under the same name (Billy: Sprites are
-  disposable, never investigated).
+  disposable, never investigated). A restore that never reached the Sprite
+  (the laptop offline, the API down) is tried again each minute: a rebuild
+  then would throw away a good golden checkpoint, as an outage did to the
+  whole pool (2026-10-30). One the Sprite refused rebuilds it.
   """
 
   use GenServer, restart: :permanent
@@ -31,6 +34,9 @@ defmodule Rigd.Fleet.Sprite do
 
   @strikes 3
   @day 24 * 3600
+
+  # A `sprite` call that never reached the Sprite: no network, or no API.
+  @unreached ~r/exited 142:|no such host|failed to make request|dial tcp|connection (closed|refused|reset)|deadline exceeded|timed? ?out/i
 
   def start_link(opts),
     do: GenServer.start_link(__MODULE__, opts, name: via(opts[:name]))
@@ -277,8 +283,13 @@ defmodule Rigd.Fleet.Sprite do
   defp done(st, :restore, :ok), do: tell(%{st | status: :idle, served: []})
 
   defp done(st, :restore, {:error, why}) do
-    Logger.warning("fleet: #{st.name} would not restore (#{why}); rebuilding it")
-    work(%{st | why: why}, :provisioning, :rebuild)
+    if why =~ @unreached do
+      Logger.warning("fleet: #{st.name} restore did not reach it (#{why}); again in a minute")
+      later(%{st | why: why}, :restore, 60)
+    else
+      Logger.warning("fleet: #{st.name} would not restore (#{why}); rebuilding it")
+      work(%{st | why: why}, :provisioning, :rebuild)
+    end
   end
 
   defp done(st, :rebuild, :ok), do: provision(%{st | golden: nil, served: []}, false)

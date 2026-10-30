@@ -13,7 +13,8 @@ defmodule Rigd.FleetTest do
   # A `sprite` CLI whose Sprites are directories under $FAKE_SPRITES; every
   # call is appended to `calls`. It fails as the real one does on a Sprite
   # already there or already gone; `<name>.create-times-out` makes the next
-  # create of that Sprite outlast its deadline after making it.
+  # create of that Sprite outlast its deadline after making it, and
+  # `offline` makes every restore fail as it does with no network.
   @cli ~S"""
   #!/bin/bash
   root=$FAKE_SPRITES
@@ -32,7 +33,9 @@ defmodule Rigd.FleetTest do
     "checkpoint create")
       n=$(($(wc -l <"$root/$4/checkpoints" 2>/dev/null || echo 0) + 1))
       echo "v$n  2026-10-29 12:00  $6" >>"$root/$4/checkpoints"; exit 0 ;;
-    "checkpoint restore") exit 0 ;;
+    "checkpoint restore")
+      [ -f "$root/offline" ] && { echo "Error: failed to restore checkpoint: failed to make request: dial tcp: lookup api.sprites.dev: no such host"; exit 1; }
+      exit 0 ;;
   esac
   exit 0
   """
@@ -208,6 +211,25 @@ defmodule Rigd.FleetTest do
     assert Fleet.status().sprites["rig-gate-1"].strikes == 0
   end
 
+  test "a restore that never reached the Sprite is tried again, not rebuilt",
+       %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    start(opts)
+    until(fn -> status("rig-gate-1") == :idle end)
+    File.write!(Path.join(root, "offline"), "")
+
+    a = lease(opts, "proj", ["rig-gate-1"])
+    assert recv(a) == %{"granted" => "rig-gate-1"}
+    send_line(a, %{release: %{sprite: "rig-gate-1", result: "failed"}})
+    assert recv(a) == %{"released" => "rig-gate-1"}
+
+    until(fn -> (Fleet.status().sprites["rig-gate-1"].why || "") =~ "no such host" end)
+    Process.sleep(300)
+    assert status("rig-gate-1") == :restoring
+    refute calls(root) =~ "destroy"
+    assert Fleet.status().sprites["rig-gate-1"].stamps == %{"proj" => @stamp}
+  end
+
   test "a provision the Sprite fails is tried once more, then the Sprite is rebuilt",
        %{root: root, opts: opts} do
     golden_sprite(root, "rig-gate-1", @stamp)
@@ -219,16 +241,20 @@ defmodule Rigd.FleetTest do
     assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
   end
 
-  test "Sprites provision one at a time", %{root: root, opts: opts} do
+  test "Sprites provision three at a time", %{root: root, opts: opts} do
     log = Path.join(root, "golden.log")
     :persistent_term.put({Golden, :log}, log)
-    start(opts)
-    until(fn -> status("rig-gate-1") == :idle and status("rig-gate-2") == :idle end)
+    sprites = for n <- 1..4, do: "rig-gate-#{n}"
+    start(Keyword.put(opts, :sprites, sprites))
+    until(fn -> Enum.all?(sprites, &(status(&1) == :idle)) end)
 
-    assert [["start", a], ["end", a], ["start", b], ["end", b]] =
-             log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&String.split/1)
-
-    assert Enum.sort([a, b]) == ~w(rig-gate-1 rig-gate-2)
+    events = log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&String.split/1)
+    {first, rest} = Enum.split(events, 3)
+    assert Enum.all?(first, &match?(["start", _], &1))
+    # The fourth starts only once one of the three has ended.
+    assert [["end", _] | _] = rest
+    starts = for ["start", s] <- events, do: s
+    assert Enum.sort(starts) == sprites
   end
 
   test "a create that outlasted its deadline but made the Sprite is done on its retry",

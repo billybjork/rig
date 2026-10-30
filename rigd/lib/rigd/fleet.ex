@@ -10,10 +10,11 @@ defmodule Rigd.Fleet do
   its project since its last restore (its tree and build caches are
   there), else any. A waiter that goes leaves the queue.
 
-  One Sprite provisions at a time, in turn (`turn/2`): a fresh Sprite
-  takes each project's whole history as a git bundle (soco's is 320 MiB),
-  and nine at once from the laptop outlasted the upload's limit on every
-  try, together (2026-10-29).
+  Three Sprites provision at a time, the rest wait their turn (`turn/2`):
+  a fresh Sprite takes each project's whole history as a git bundle
+  (soco's is 320 MiB), and nine at once from the laptop outlasted the
+  upload's limit on every try, together (2026-10-29); one at a time took
+  the pool most of a day to come back after an outage (2026-10-30).
 
   Every 10 minutes it reads each project's stamp on `origin/main`. An idle
   Sprite whose golden checkpoint was taken under other stamps is made
@@ -29,6 +30,7 @@ defmodule Rigd.Fleet do
   alias Rigd.Fleet.Sprite
 
   @stamps_every 10 * 60 * 1000
+  @turns 3
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -41,7 +43,7 @@ defmodule Rigd.Fleet do
   @doc "Asks for the turn to provision; `pid` gets `:fleet_turn` when it has it."
   def turn(fleet, pid), do: GenServer.cast(fleet, {:turn, pid})
 
-  @doc "Says `pid` holds the turn (a Sprite provisioning when `Fleet` restarted)."
+  @doc "Says `pid` holds a turn (a Sprite provisioning when `Fleet` restarted)."
   def holding(fleet, pid), do: GenServer.cast(fleet, {:holding, pid})
 
   @doc "Gives the turn back."
@@ -111,7 +113,8 @@ defmodule Rigd.Fleet do
        opts: opts,
        sprites: Map.new(opts[:sprites], &{&1, %{status: :checking, stamps: nil, served: []}}),
        queue: [],
-       turn: nil,
+       # The Sprites provisioning, and those waiting their turn.
+       turning: [],
        turns: [],
        stamps: %{},
        reading: nil
@@ -126,24 +129,24 @@ defmodule Rigd.Fleet do
   end
 
   def handle_cast({:turn, pid}, st) do
-    if Enum.any?([st.turn | st.turns], &match?({^pid, _}, &1)) do
+    if Enum.any?(st.turning ++ st.turns, &match?({^pid, _}, &1)) do
       {:noreply, st}
     else
       {:noreply, next_turn(%{st | turns: st.turns ++ [{pid, Process.monitor(pid)}]})}
     end
   end
 
-  def handle_cast({:holding, pid}, %{turn: nil} = st),
-    do: {:noreply, %{st | turn: {pid, Process.monitor(pid)}}}
-
-  def handle_cast({:holding, _pid}, st), do: {:noreply, st}
-
-  def handle_cast({:turn_done, pid}, %{turn: {pid, ref}} = st) do
-    Process.demonitor(ref, [:flush])
-    {:noreply, next_turn(%{st | turn: nil})}
+  def handle_cast({:holding, pid}, st) do
+    if Enum.any?(st.turning, &match?({^pid, _}, &1)),
+      do: {:noreply, st},
+      else: {:noreply, %{st | turning: [{pid, Process.monitor(pid)} | st.turning]}}
   end
 
-  def handle_cast({:turn_done, _pid}, st), do: {:noreply, st}
+  def handle_cast({:turn_done, pid}, st) do
+    {done, turning} = Enum.split_with(st.turning, &match?({^pid, _}, &1))
+    Enum.each(done, fn {_, ref} -> Process.demonitor(ref, [:flush]) end)
+    {:noreply, next_turn(%{st | turning: turning})}
+  end
 
   @impl true
   def handle_call(:status, _from, st) do
@@ -161,7 +164,7 @@ defmodule Rigd.Fleet do
       st
       | queue: Enum.reject(st.queue, &(&1.ref == ref)),
         turns: Enum.reject(st.turns, &match?({_, ^ref}, &1)),
-        turn: if(match?({_, ^ref}, st.turn), do: nil, else: st.turn)
+        turning: Enum.reject(st.turning, &match?({_, ^ref}, &1))
     }
 
     {:noreply, next_turn(st)}
@@ -222,10 +225,11 @@ defmodule Rigd.Fleet do
     %{st | queue: queue, sprites: sprites}
   end
 
-  # The turn to provision goes to the next Sprite asking for it.
-  defp next_turn(%{turn: nil, turns: [{pid, _} = next | turns]} = st) do
+  # A free turn to provision goes to the next Sprite asking for it.
+  defp next_turn(%{turns: [{pid, _} = next | turns]} = st)
+       when length(st.turning) < @turns do
     send(pid, :fleet_turn)
-    %{st | turn: next, turns: turns}
+    next_turn(%{st | turning: [next | st.turning], turns: turns})
   end
 
   defp next_turn(st), do: st
