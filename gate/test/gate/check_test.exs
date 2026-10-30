@@ -122,12 +122,18 @@ defmodule Gate.CheckTest do
   test "a launch line lost among the keeper's dots is read from the Sprite at the first dot",
        env do
     File.touch!(Path.join(env.root, "gate-1/tty-lossy"))
+    lost = Path.join(env.tmp, "lost")
+    System.put_env("GATE_LOST_LAUNCH", lost)
+    on_exit(fn -> System.delete_env("GATE_LOST_LAUNCH") end)
     parts = [{"static", "bash cmd.sh sleep 6"}, {"test-1", "bash cmd.sh green"}]
     t0 = System.monotonic_time(:second)
     {status, _out, err} = check(env, parts)
     assert status == 0, err
     refute err =~ "failed"
     assert System.monotonic_time(:second) - t0 < 30
+    # What the TTY showed is kept, to learn what hid the line.
+    assert [raw] = File.ls!(lost)
+    assert File.read!(Path.join(lost, raw)) =~ "garbled"
   end
 
   test "no verdict when a part's rerun fails too: neither green nor red", env do

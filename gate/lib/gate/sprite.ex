@@ -140,6 +140,7 @@ defmodule Gate.Sprite do
             if seen =~ ~r/\n\.\r?\n/ do
               System.cmd("kill", ["-TERM", to_string(pid)])
               drain(port)
+              keep_lost(seen)
               {:error, "the launch line was lost: #{last_line(seen)}"}
             else
               await_launch(port, pid, String.slice(seen, -4000, 4000))
@@ -170,6 +171,23 @@ defmodule Gate.Sprite do
     case Regex.run(~r/gate-launched (\S+)\r?\n/, seen) do
       [_, life] -> life
       nil -> nil
+    end
+  end
+
+  # What the TTY showed of a lost launch line, to learn what hid it:
+  # $GATE_LOST_LAUNCH, else ~/Library/Logs/gate-lost-launch/, the newest 20.
+  defp keep_lost(seen) do
+    dir = System.get_env("GATE_LOST_LAUNCH") || Path.expand("~/Library/Logs/gate-lost-launch")
+
+    with :ok <- File.mkdir_p(dir) do
+      stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S")
+      File.write(Path.join(dir, "#{stamp}-#{System.unique_integer([:positive])}.raw"), seen)
+
+      dir
+      |> File.ls!()
+      |> Enum.sort(:desc)
+      |> Enum.drop(20)
+      |> Enum.each(&File.rm(Path.join(dir, &1)))
     end
   end
 
