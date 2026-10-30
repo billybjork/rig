@@ -117,6 +117,39 @@ defmodule Shipyard.Entry do
     {tier, ship.gate ++ [tier]}
   end
 
+  # The rig a gate runs (RIG): rig's main as the gate begins, in a clone
+  # beside the worker's own, so a fix to the gate runner reaches the next
+  # gate, not the next worker start. Busy workers gated on the morning's
+  # runner all day while its fixes landed (2026-10-30). A clone that will
+  # not refresh leaves the worker's own; without RIG (a hand run) the
+  # project's script finds rig itself.
+  @doc false
+  def gate_rig(ship) do
+    with app when is_binary(app) <- System.get_env("RIG"),
+         {origin, 0} <- Cmd.git(ship, app, ["remote", "get-url", "origin"]),
+         dir = Path.join(ship.home, "gate-rig"),
+         :ok <- clone(ship, String.trim(origin), dir),
+         {_, 0} <- Cmd.git(ship, dir, ["fetch", "-q", "origin"]),
+         {_, 0} <- Cmd.git(ship, dir, ["checkout", "-q", "--force", "--detach", "origin/main"]) do
+      [{"RIG", dir}]
+    else
+      _ -> []
+    end
+  end
+
+  defp clone(ship, origin, dir) do
+    if File.dir?(Path.join(dir, ".git")) do
+      :ok
+    else
+      File.rm_rf!(dir)
+
+      case Cmd.git(ship, ship.home, ["clone", "-q", origin, dir]) do
+        {_, 0} -> :ok
+        _ -> :error
+      end
+    end
+  end
+
   defp gate(ship, dir, tier, [cmd | args] = command, sha, pr) do
     command = Enum.join(command, " ")
 
@@ -126,10 +159,12 @@ defmodule Shipyard.Entry do
       Cmd.run(ship, dir, cmd, args,
         stderr_to_stdout: false,
         timeout: ship.gate_timeout_ms,
-        env: [
-          {"SHIPYARD_STATUS_ID", Status.id(pr)},
-          {"SHIPYARD_STATUS_TTY", ship.status} | ship.env
-        ]
+        env:
+          gate_rig(ship) ++
+            [
+              {"SHIPYARD_STATUS_ID", Status.id(pr)},
+              {"SHIPYARD_STATUS_TTY", ship.status} | ship.env
+            ]
       )
 
     run = gate_run(ship, sha)

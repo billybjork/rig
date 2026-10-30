@@ -282,8 +282,8 @@ run_worker() {
     done <"$primary/.env"
   fi
   unset MIX_ENV
-  # RIG: rig as of this start, so a project's gate runs rig's gate runner
-  # (gate/bin/gate) from the same commit as the worker.
+  # RIG: rig as of this start. Each gate runs rig's gate runner from its
+  # own clone at rig's main as it begins (Shipyard.Entry.gate_rig/1).
   export SHIPYARD_CONFIG=$home/repo/.shipyard.json SHIPYARD_HOME=$home RIG=$home/app
   keep=()
   command -v caffeinate >/dev/null && keep=(caffeinate -i)
