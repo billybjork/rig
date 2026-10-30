@@ -170,9 +170,9 @@ Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
   15:39 (each golden 3 to 10 min), and heaters (`7246b4e4`, 375 s) and
   soco (`5350810a`, 748 s, a restart and an unreachable Sprite both
   rerun) each gated green on the pool.
-- Open: a Sprite whose every API call times out sits in `checking` or
-  `end_parts` for good (rig-gate-3 was destroyed by hand and rebuilt;
-  rig-gate-4 sat unreachable at 15:40). Rebuilding it automatically has
-  to tell it from the laptop being offline, which looks the same.
+- A Sprite whose every call has failed for 15 minutes while `sprite
+  list` answers is rebuilt (Billy, 2026-10-30); rig-gate-3 and -4 sat
+  stuck that way, one destroyed by hand. With `list` failing too, the
+  laptop is offline, and Fleet only waits.
 
 Then agents on Sprites (step 5).

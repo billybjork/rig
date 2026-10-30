@@ -16,16 +16,27 @@ defmodule Rigd.FleetTest do
   # create of that Sprite outlast its deadline after making it,
   # `offline` makes every restore fail as it does with no network, and
   # `full` every create as the account's limit of Sprites at once does.
+  # `<name>.hangs` makes every call about that Sprite but create, destroy
+  # and list time out, as a Sprite stuck on the platform's side does, until
+  # it is created again, and
+  # `down` makes every call fail as it does with the laptop offline.
   @cli ~S"""
   #!/bin/bash
   root=$FAKE_SPRITES
   echo "$*" >>"$root/calls"
+  [ -f "$root/down" ] && { echo "Error: failed to make request: dial tcp: lookup api.sprites.dev: no such host"; exit 1; }
+  case "$1" in create | destroy | list) ;; *)
+    for a in "$@"; do
+      [ -f "$root/$a.hangs" ] && { echo "Error: failed to make request: context deadline exceeded"; exit 1; }
+    done ;;
+  esac
   case "$1 $2" in
     "list "*) for d in "$root"/*/; do [ -d "$d" ] && basename "$d"; done; exit 0 ;;
     "create "*)
       [ -f "$root/full" ] && { echo "Error: Maximum concurrent sprites limit (10) reached for your organization."; exit 1; }
       [ -d "$root/$3" ] && { echo "Error: A sprite named '$3' already exists."; exit 1; }
       mkdir -p "$root/$3"
+      rm -f "$root/$3.hangs"
       [ -f "$root/$3.create-times-out" ] && { rm "$root/$3.create-times-out"; exit 142; }
       exit 0 ;;
     "destroy "*)
@@ -120,7 +131,12 @@ defmodule Rigd.FleetTest do
 
   defp status(name), do: Fleet.status().sprites[name][:status]
 
-  defp calls(root), do: File.read!(Path.join(root, "calls"))
+  defp calls(root) do
+    case File.read(Path.join(root, "calls")) do
+      {:ok, text} -> text
+      {:error, :enoent} -> ""
+    end
+  end
 
   defp connect(opts) do
     {:ok, sock} =
@@ -315,7 +331,7 @@ defmodule Rigd.FleetTest do
 
     for _ <- 1..3 do
       File.rm(Path.join(root, "calls"))
-      until(fn -> File.exists?(Path.join(root, "calls")) and calls(root) =~ "create" end)
+      until(fn -> calls(root) =~ "create" end)
       until(fn -> (Fleet.status().sprites["rig-gate-2"].why || "") =~ "limit (10)" end)
       Process.sleep(100)
       assert status("rig-gate-2") == :provisioning
@@ -325,6 +341,56 @@ defmodule Rigd.FleetTest do
     File.rm!(Path.join(root, "full"))
     until(fn -> status("rig-gate-2") == :idle end)
     refute calls(root) =~ "destroy"
+  end
+
+  test "a Sprite stuck on the platform's side for the stuck time is rebuilt",
+       %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    golden_sprite(root, "rig-gate-2", @stamp)
+    File.write!(Path.join(root, "rig-gate-1.hangs"), "")
+    start(Keyword.put(opts, :stuck, 0))
+    until(fn -> status("rig-gate-1") == :idle end)
+    assert calls(root) =~ "destroy --force -s rig-gate-1"
+    until(fn -> status("rig-gate-1") == :idle end)
+    assert Fleet.status().sprites["rig-gate-1"].stamps == %{"proj" => @stamp}
+  end
+
+  test "a stuck Sprite that list no longer names is created again", %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    golden_sprite(root, "rig-gate-2", @stamp)
+    start(opts)
+    until(fn -> status("rig-gate-1") == :idle end)
+    File.write!(Path.join(root, "rig-gate-1.hangs"), "")
+    a = lease(opts, "proj", ["rig-gate-1"])
+    assert recv(a) == %{"granted" => "rig-gate-1"}
+    pid = GenServer.whereis({:via, Registry, {Rigd.Fleet.Registry, "rig-gate-1"}})
+    :sys.replace_state(pid, &put_in(&1.opts[:stuck], 0))
+    File.rm_rf!(Path.join(root, "rig-gate-1"))
+    :gen_tcp.close(a)
+    until(fn -> calls(root) =~ "create --skip-console rig-gate-1" end)
+    until(fn -> status("rig-gate-1") == :idle end)
+    refute calls(root) =~ "destroy"
+  end
+
+  test "with the laptop offline a failing Sprite only waits", %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    golden_sprite(root, "rig-gate-2", @stamp)
+    File.write!(Path.join(root, "down"), "")
+    start(Keyword.put(opts, :stuck, 0))
+    pid = GenServer.whereis({:via, Registry, {Rigd.Fleet.Registry, "rig-gate-1"}})
+
+    for _ <- 1..3 do
+      File.rm(Path.join(root, "calls"))
+      until(fn -> calls(root) =~ "list" end)
+      Process.sleep(100)
+      send(pid, {:again, :check})
+    end
+
+    assert status("rig-gate-1") == :checking
+    refute calls(root) =~ "destroy"
+    File.rm!(Path.join(root, "down"))
+    send(pid, {:again, :check})
+    until(fn -> status("rig-gate-1") == :idle end)
   end
 
   test "Sprites provision three at a time", %{root: root, opts: opts} do

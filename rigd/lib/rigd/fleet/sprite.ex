@@ -35,6 +35,13 @@ defmodule Rigd.Fleet.Sprite do
   (the laptop offline, the API down) is tried again each minute: a rebuild
   then would throw away a good golden checkpoint, as an outage did to the
   whole pool (2026-10-30). One the Sprite refused rebuilds it.
+
+  A Sprite whose check, restore or ending of a part's leftovers has failed
+  for 15 minutes (`stuck`, in seconds) while `sprite list` still answers is
+  stuck on the platform's side, not cut off from the laptop: it is rebuilt
+  (rig-gate-3 and -4 timed out on every call, 2026-10-30; Billy approved
+  the rule the same day). With `list` failing too, the laptop is offline,
+  and it only waits. One that `list` no longer names is created again.
   """
 
   use GenServer, restart: :permanent
@@ -43,6 +50,7 @@ defmodule Rigd.Fleet.Sprite do
   alias Rigd.Fleet.CLI
 
   @strikes 3
+  @stuck 15 * 60
   @day 24 * 3600
 
   # The account's limit of Sprites at once: a dev Sprite awake, or one
@@ -131,6 +139,8 @@ defmodule Rigd.Fleet.Sprite do
       failures: 0,
       # Provisions in a row that failed on the laptop's side.
       laptop: 0,
+      # When its calls began to fail (check, restore, end_parts), or nil.
+      stuck: nil,
       task: nil,
       # The provision waiting for its turn: {:provision, create?}.
       waiting: nil,
@@ -222,6 +232,7 @@ defmodule Rigd.Fleet.Sprite do
 
   defp finished(st, step, result) do
     if match?({:provision, _}, step), do: Rigd.Fleet.turn_done(st.fleet, self())
+    st = if match?({:error, _}, result), do: st, else: %{st | stuck: nil}
     done(%{st | task: nil}, step, here(step, result))
   end
 
@@ -262,6 +273,11 @@ defmodule Rigd.Fleet.Sprite do
         {:ok, :missing}
       end
     end
+  end
+
+  defp run({:stuck, _}, name, _golden, _opts) do
+    with {:ok, sprites} <- CLI.list(),
+         do: {:ok, if(name in sprites, do: :listed, else: :missing)}
   end
 
   defp run(:restore, name, golden, _opts),
@@ -321,10 +337,27 @@ defmodule Rigd.Fleet.Sprite do
   defp done(st, :check, {:ok, :missing}), do: provision(%{st | why: nil}, true)
   defp done(st, :check, {:ok, nil}), do: provision(%{st | why: nil}, false)
 
-  defp done(st, step, {:error, why}) when step in [:check, :end_parts, :rebuild] do
-    Logger.warning("fleet: #{st.name} #{step}: #{why}; again in a minute")
-    later(%{st | why: why}, step, 60)
+  defp done(st, :rebuild, {:error, why}) do
+    Logger.warning("fleet: #{st.name} rebuild: #{why}; again in a minute")
+    later(%{st | why: why}, :rebuild, 60)
   end
+
+  defp done(st, step, {:error, why}) when step in [:check, :end_parts] do
+    Logger.warning("fleet: #{st.name} #{step}: #{why}; again in a minute")
+    failing(%{st | why: why}, step)
+  end
+
+  # `sprite list` answered: the laptop reaches the API, and the Sprite is
+  # stuck on its side.
+  defp done(st, {:stuck, _}, {:ok, :listed}) do
+    Logger.warning("fleet: #{st.name} has failed every call for 15 min; rebuilding it")
+    work(%{st | stuck: nil, golden: nil, strikes: []}, :provisioning, :rebuild)
+  end
+
+  defp done(st, {:stuck, _}, {:ok, :missing}),
+    do: provision(%{st | stuck: nil, golden: nil, strikes: [], why: nil}, true)
+
+  defp done(st, {:stuck, step}, {:error, _}), do: later(st, step, 60)
 
   defp done(st, :end_parts, :ok), do: tell(%{st | status: :idle})
 
@@ -333,7 +366,7 @@ defmodule Rigd.Fleet.Sprite do
   defp done(st, :restore, {:error, why}) do
     if why =~ @unreached do
       Logger.warning("fleet: #{st.name} restore did not reach it (#{why}); again in a minute")
-      later(%{st | why: why}, :restore, 60)
+      failing(%{st | why: why}, :restore)
     else
       Logger.warning("fleet: #{st.name} would not restore (#{why}); rebuilding it")
       work(%{st | why: why}, :provisioning, :rebuild)
@@ -385,6 +418,17 @@ defmodule Rigd.Fleet.Sprite do
     else
       work(st, :restoring, :restore)
     end
+  end
+
+  # A call of `step` failed: again in a minute, unless its calls have failed
+  # for `stuck` seconds, when `sprite list` says whose side it is on.
+  defp failing(st, step) do
+    now = System.os_time(:second)
+    st = %{st | stuck: st.stuck || now}
+
+    if now - st.stuck >= Keyword.get(st.opts, :stuck, @stuck),
+      do: work(st, st.status, {:stuck, step}),
+      else: later(st, step, 60)
   end
 
   defp later(st, step, secs) do

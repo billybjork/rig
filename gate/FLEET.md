@@ -93,7 +93,10 @@ it is idle again; three
 strikes in a day retire it, and `Fleet` builds a replacement (create,
 provision, every project's setup, checkpoint) while the pool runs
 one short. Billy's rule: Sprites are disposable, so a retired one is
-destroyed, not investigated.
+destroyed, not investigated. So is one whose calls (check, restore,
+ending a part's leftovers) have all failed for 15 minutes while `sprite
+list` still answers (Billy, 2026-10-30); with `list` failing too, the
+laptop is offline, and it waits.
 
 `Gate.Engine` changes little: where it now takes the spare or a finished
 Sprite from its own list, it asks for a lease, so a crashed part reruns on
