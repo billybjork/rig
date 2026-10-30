@@ -21,7 +21,9 @@ defmodule Rigd.Fleet.Sprite do
       One that failed on the laptop's side (git or DNS here, a call that
       never reached the API) is tried again later, every time longer, up
       to half an hour, and costs the Sprite nothing: on 2026-10-30 a DNS
-      outage here ran four Sprites through their rebuilds.
+      outage here ran four Sprites through their rebuilds. So does a create
+      the account's limit of 10 Sprites at once refused: it waits for a
+      slot (Billy chose waiting over a pool of 8, 2026-10-30).
 
   A strike is a native crash, or a part it failed right after another it
   failed (the same Sprite failing every part); three in a day retire it: it
@@ -41,6 +43,10 @@ defmodule Rigd.Fleet.Sprite do
 
   @strikes 3
   @day 24 * 3600
+
+  # The account's limit of Sprites at once: a dev Sprite awake, or one
+  # outside the pool, holds a slot (12 creates failed on it, 2026-10-29).
+  @limit ~r/concurrent sprites limit/i
 
   # A `sprite` call that never reached the Sprite: no network, or no API.
   @unreached ~r/exited 142:|no such host|failed to make request|dial tcp|connection (closed|refused|reset)|deadline exceeded|timed? ?out/i
@@ -216,9 +222,14 @@ defmodule Rigd.Fleet.Sprite do
   end
 
   # A provision's `sprite` call that never reached the API failed on the
-  # laptop's side.
-  defp here({:provision, _}, {:error, why} = result),
-    do: if(why =~ @unreached, do: {:laptop, why}, else: result)
+  # laptop's side; one the account's limit refused waits for a slot.
+  defp here({:provision, _}, {:error, why} = result) do
+    cond do
+      why =~ @unreached -> {:laptop, why}
+      why =~ @limit -> {:limit, why}
+      true -> result
+    end
+  end
 
   defp here(_step, result), do: result
 
@@ -340,7 +351,7 @@ defmodule Rigd.Fleet.Sprite do
     if st.golden, do: work(st, :restoring, :restore), else: later(st, step, 1800)
   end
 
-  defp done(st, {:provision, _} = step, {:laptop, why}) do
+  defp done(st, {:provision, _} = step, {kind, why}) when kind in [:laptop, :limit] do
     secs = min(60 * 2 ** st.laptop, 1800)
     Logger.warning("fleet: #{st.name} provision failed here (#{why}); again in #{secs} s")
     later(%{st | laptop: st.laptop + 1, why: why}, step, secs)

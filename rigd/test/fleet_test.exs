@@ -13,8 +13,9 @@ defmodule Rigd.FleetTest do
   # A `sprite` CLI whose Sprites are directories under $FAKE_SPRITES; every
   # call is appended to `calls`. It fails as the real one does on a Sprite
   # already there or already gone; `<name>.create-times-out` makes the next
-  # create of that Sprite outlast its deadline after making it, and
-  # `offline` makes every restore fail as it does with no network.
+  # create of that Sprite outlast its deadline after making it,
+  # `offline` makes every restore fail as it does with no network, and
+  # `full` every create as the account's limit of Sprites at once does.
   @cli ~S"""
   #!/bin/bash
   root=$FAKE_SPRITES
@@ -22,6 +23,7 @@ defmodule Rigd.FleetTest do
   case "$1 $2" in
     "list "*) for d in "$root"/*/; do [ -d "$d" ] && basename "$d"; done; exit 0 ;;
     "create "*)
+      [ -f "$root/full" ] && { echo "Error: Maximum concurrent sprites limit (10) reached for your organization."; exit 1; }
       [ -d "$root/$3" ] && { echo "Error: A sprite named '$3' already exists."; exit 1; }
       mkdir -p "$root/$3"
       [ -f "$root/$3.create-times-out" ] && { rm "$root/$3.create-times-out"; exit 142; }
@@ -288,6 +290,27 @@ defmodule Rigd.FleetTest do
     until(fn -> status("rig-gate-2") == :idle end)
     refute calls(root) =~ "destroy"
     assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
+  end
+
+  test "a create the account's limit refused waits for a slot, costing the Sprite nothing",
+       %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    File.write!(Path.join(root, "full"), "")
+    start(opts)
+    pid = GenServer.whereis({:via, Registry, {Rigd.Fleet.Registry, "rig-gate-2"}})
+
+    for _ <- 1..3 do
+      File.rm(Path.join(root, "calls"))
+      until(fn -> File.exists?(Path.join(root, "calls")) and calls(root) =~ "create" end)
+      until(fn -> (Fleet.status().sprites["rig-gate-2"].why || "") =~ "limit (10)" end)
+      Process.sleep(100)
+      assert status("rig-gate-2") == :provisioning
+      send(pid, {:again, {:provision, true}})
+    end
+
+    File.rm!(Path.join(root, "full"))
+    until(fn -> status("rig-gate-2") == :idle end)
+    refute calls(root) =~ "destroy"
   end
 
   test "Sprites provision three at a time", %{root: root, opts: opts} do
