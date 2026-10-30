@@ -23,8 +23,9 @@ defmodule Rigd.Fleet.Golden do
 
   @doc """
   The project's setup on `sprite`: `{:green, name, stamp}`, `{:red, why}`
-  (`gate golden` exited 1: not the Sprite's doing), or `{:sprite_failed,
-  why}`.
+  (`gate golden` exited 1: not the Sprite's doing), `{:sprite_failed,
+  why}`, or `{:laptop, why}` when git failed here (no network, DNS): not
+  the Sprite's doing either.
   """
   def run(gate, dir, sprite) do
     tmp =
@@ -46,6 +47,8 @@ defmodule Rigd.Fleet.Golden do
         1 -> {:red, "#{name}'s golden setup exited 1 (#{log})"}
         _ -> {:sprite_failed, "#{name}'s golden setup: exit #{status} (#{log})"}
       end
+    else
+      {:error, why} -> {:laptop, why}
     end
   end
 

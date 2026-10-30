@@ -18,6 +18,10 @@ defmodule Rigd.Fleet.Sprite do
       13545dd5… heaters 7d1c…`). It waits for its turn (`Rigd.Fleet.turn/2`):
       three Sprites provision at a time. A provision the Sprite fails is tried
       once more, then the Sprite is rebuilt (destroyed and created again).
+      One that failed on the laptop's side (git or DNS here, a call that
+      never reached the API) is tried again later, every time longer, up
+      to half an hour, and costs the Sprite nothing: on 2026-10-30 a DNS
+      outage here ran four Sprites through their rebuilds.
 
   A strike is a native crash, or a part it failed right after another it
   failed (the same Sprite failing every part); three in a day retire it: it
@@ -118,6 +122,8 @@ defmodule Rigd.Fleet.Sprite do
       # Whether the last part it held ended `failed`.
       failed_last: false,
       failures: 0,
+      # Provisions in a row that failed on the laptop's side.
+      laptop: 0,
       task: nil,
       # The provision waiting for its turn: {:provision, create?}.
       waiting: nil,
@@ -206,8 +212,15 @@ defmodule Rigd.Fleet.Sprite do
 
   defp finished(st, step, result) do
     if match?({:provision, _}, step), do: Rigd.Fleet.turn_done(st.fleet, self())
-    done(%{st | task: nil}, step, result)
+    done(%{st | task: nil}, step, here(step, result))
   end
+
+  # A provision's `sprite` call that never reached the API failed on the
+  # laptop's side.
+  defp here({:provision, _}, {:error, why} = result),
+    do: if(why =~ @unreached, do: {:laptop, why}, else: result)
+
+  defp here(_step, result), do: result
 
   defp again(st, {:provision, create?}), do: provision(st, create?)
   defp again(st, step), do: work(st, st.status, step)
@@ -316,7 +329,7 @@ defmodule Rigd.Fleet.Sprite do
 
   defp done(st, {:provision, _}, {:golden, golden}) do
     Logger.info("fleet: #{st.name} golden (#{golden.id}: #{golden_comment(golden.stamps)})")
-    tell(%{st | status: :idle, golden: golden, failures: 0, why: nil, served: []})
+    tell(%{st | status: :idle, golden: golden, failures: 0, laptop: 0, why: nil, served: []})
   end
 
   # A project's main is red: not the Sprite's doing. A Sprite with a golden
@@ -325,6 +338,12 @@ defmodule Rigd.Fleet.Sprite do
     Logger.warning("fleet: #{st.name}: #{why}")
     st = %{st | why: why}
     if st.golden, do: work(st, :restoring, :restore), else: later(st, step, 1800)
+  end
+
+  defp done(st, {:provision, _} = step, {:laptop, why}) do
+    secs = min(60 * 2 ** st.laptop, 1800)
+    Logger.warning("fleet: #{st.name} provision failed here (#{why}); again in #{secs} s")
+    later(%{st | laptop: st.laptop + 1, why: why}, step, secs)
   end
 
   defp done(st, {:provision, create?} = step, {kind, why})

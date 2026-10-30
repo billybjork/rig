@@ -271,6 +271,25 @@ defmodule Rigd.FleetTest do
     assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
   end
 
+  test "a provision that failed on the laptop's side is tried again later, costing the Sprite nothing",
+       %{root: root, opts: opts} do
+    golden_sprite(root, "rig-gate-1", @stamp)
+    fetch = &{:laptop, "git fetch in ~/dev/proj exited 128: Could not resolve host (#{&1})"}
+    :persistent_term.put({Golden, "rig-gate-2"}, Enum.map(1..4, fetch))
+    start(opts)
+    pid = GenServer.whereis({:via, Registry, {Rigd.Fleet.Registry, "rig-gate-2"}})
+
+    for n <- 1..4 do
+      until(fn -> (Fleet.status().sprites["rig-gate-2"].why || "") =~ "host (#{n})" end)
+      assert status("rig-gate-2") == :provisioning
+      send(pid, {:again, {:provision, true}})
+    end
+
+    until(fn -> status("rig-gate-2") == :idle end)
+    refute calls(root) =~ "destroy"
+    assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
+  end
+
   test "Sprites provision three at a time", %{root: root, opts: opts} do
     log = Path.join(root, "golden.log")
     :persistent_term.put({Golden, :log}, log)
@@ -292,6 +311,14 @@ defmodule Rigd.FleetTest do
     golden_sprite(root, "rig-gate-1", @stamp)
     File.write!(Path.join(root, "rig-gate-2.create-times-out"), "")
     start(opts)
+    # A call that outlasted its deadline is tried again later, as one that never reached the API.
+    until(fn -> (Fleet.status().sprites["rig-gate-2"].why || "") =~ "exited 142" end)
+
+    send(
+      GenServer.whereis({:via, Registry, {Rigd.Fleet.Registry, "rig-gate-2"}}),
+      {:again, {:provision, true}}
+    )
+
     until(fn -> status("rig-gate-2") == :idle end)
     assert length(String.split(calls(root), "create --skip-console rig-gate-2")) == 3
     assert Fleet.status().sprites["rig-gate-2"].stamps == %{"proj" => @stamp}
