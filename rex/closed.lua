@@ -12,20 +12,18 @@ rex.action{
   description = "Reopen a tab or pane that closed lately, its Claude session resumed.",
   category = "Tab",
   keywords = "recently closed reopen restore undo tab pane claude resume",
-  run = function()
-    -- A picker in a floating layer over the whole tab, so the panes behind
-    -- it don't show through; it closes once it is done, back to this tab.
-    local r, err = rex.session.new_layer{
-      bounds = { 0, 0, 1, 1 },
-      focus = true,
+  run = function(ctx)
+    -- The picker in a tab of its own; it gives focus back to this pane when
+    -- cancelled, and closes once it is done.
+    local w, err = rex.session.new_window{
+      window_label = "Recently Closed",
       layout = rex.layout.block{
         flavor = terminal .. ".shell",
-        label = "recently closed",
-        options = { command = { "/bin/zsh", "-lic", 'exec "$@"', "zsh", closed, "pick" } },
+        options = { command = { "/bin/zsh", "-lic", 'exec "$@"', "zsh", closed, "pick", ctx.block_id or "" } },
       },
     }
-    if r == nil then error(err, 0) end
-    return r
+    if w == nil then error(err, 0) end
+    return { window_id = w.window_id }
   end,
 }
 
