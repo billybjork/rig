@@ -107,7 +107,7 @@ The audit behind this (Sprite failure modes, duplication, secrets) is in the
 session of 2026-10-28; the Sprite gate's open items are in
 `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`.
 
-## Where we are (2026-10-29)
+## Where we are (2026-10-30)
 
 Done: this repository; the shared guide and `handoff` skill; Rex config moved
 in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
@@ -148,18 +148,31 @@ Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
   (`e70482f0`), heaters #557 (`9f02fe4d`).
 - rigd's `Fleet` runs (`rigd/lib/rigd/fleet*`, `gate golden`, `gate
   stamp <rev>`; socket `~/Library/Caches/rigd/fleet.sock`, logs
-  `~/Library/Logs/rigd.log` and `~/Library/Logs/rigd-fleet/`), and
-  `Gate.Engine` leases from it for a project whose `.gate.json` says
-  `"pool": "fleet"` (`gate/lib/gate/lease.ex`). The pool is `rig-gate-1`
-  to `-10` (`gate/fleet.json`); all ten were provisioning from
-  2026-10-29 11:10, each running soco's provision gate and then heaters',
-  one part at a time. A restart of rigd (`bin/rigd install`) kills the
-  provision gates under way, and they start over.
-- Billy approved (2026-10-29): a shared pool of 10 Sprites, and each
-  project's own pool destroyed after three green ships in a row on the
-  shared one. Next: once the pool is golden, soco moves to `"pool":
-  "fleet"` through its ship, three green ships, then soco-gate-1..6 are
-  destroyed; then heaters the same way (heaters-gate-1..5). The dev
-  Sprites stay.
+  `~/Library/Logs/rigd.log` and `~/Library/Logs/rigd-fleet/`; `bin/rigd
+  fleet` prints each Sprite's state), and `Gate.Engine` leases from it for
+  a project whose `.gate.json` says `"pool": "fleet"`
+  (`gate/lib/gate/lease.ex`). The pool is `rig-gate-1` to `-10`
+  (`gate/fleet.json`); soco and heaters both gate on it, and their own
+  pools are destroyed (heaters-gate-1..5 after three green ships;
+  soco-gate-1..6 on 2026-10-30, Billy's call, after two). The dev Sprites
+  stay.
+- Billy's six Fleet changes (2026-10-30), after 16 golden checkpoints in
+  about 137 provisioning attempts over two days left 3 of 10 Sprites
+  serving: a golden only sets up and warms caches, each step resumed on
+  its Sprite, and needs no green `main` (990d34b); a restart is not a
+  strike (e4000b5); a provision that failed on the laptop's side (git,
+  DNS, an unreached API) waits and retries at no cost to the Sprite
+  (28e112c), as does a create the 10-Sprite limit refused, rather than
+  shrinking the pool to 8 (94a3340); a `failed` or `restarted` part ends
+  its leftovers instead of restoring the golden (df5a766); a restarted
+  part is relaunched on its own Sprite first (acd713f). After rigd's
+  restart at 15:00 PDT, 8 Sprites were golden by 15:18 and all 10 by
+  15:39 (each golden 3 to 10 min), and heaters (`7246b4e4`, 375 s) and
+  soco (`5350810a`, 748 s, a restart and an unreachable Sprite both
+  rerun) each gated green on the pool.
+- Open: a Sprite whose every API call times out sits in `checking` or
+  `end_parts` for good (rig-gate-3 was destroyed by hand and rebuilt;
+  rig-gate-4 sat unreachable at 15:40). Rebuilding it automatically has
+  to tell it from the laptop being offline, which looks the same.
 
 Then agents on Sprites (step 5).
