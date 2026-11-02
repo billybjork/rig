@@ -110,9 +110,59 @@ defmodule Tidy.WorktreesTest do
 
     assert ".worktrees/landed [claude/landed]: PR #7 merged at its tip; 'tidy prune' removes it" in lines
 
-    assert ".worktrees/ahead [claude/ahead]: PR #8 merged, but 1 commit(s) came after it; left alone" in lines
+    assert ".worktrees/ahead [claude/ahead]: PR #8 merged, but 1 commit(s) never shipped; left alone" in lines
 
     assert ".worktrees/here [claude/here]: 0 commit(s) ahead of origin/main, PR #9 open; left alone (ship it or remove it deliberately)" in lines
+  end
+
+  test "merged-pr: a branch the worker rebased landed, its PR head only on GitHub", %{
+    primary: p,
+    path: path
+  } do
+    # The PR's head: claude/ahead's commit rebased onto a commit of main's,
+    # pushed from another clone as GitHub keeps it, refs/pull/5/head.
+    other = Path.join(Path.dirname(p), "other")
+    git(Path.dirname(p), ["clone", "-q", "origin.git", other])
+    git(other, ~w(checkout -q -b rebased))
+    File.write!(Path.join(other, "g.txt"), "elsewhere")
+    git(other, ~w(add g.txt))
+    git(other, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "main moved"])
+    unshipped = String.trim(git(path.("ahead"), ~w(rev-parse HEAD)))
+    git(other, ["fetch", "-q", path.("ahead"), unshipped])
+    git(other, ["-c", "user.name=t", "-c", "user.email=t@t", "cherry-pick", unshipped])
+    git(other, ~w(push -q origin HEAD:refs/pull/5/head))
+    rebased = String.trim(git(other, ~w(rev-parse HEAD)))
+    assert {_, 1} = System.cmd("git", ["cat-file", "-e", rebased], cd: p, stderr_to_stdout: true)
+
+    prs = fn
+      "claude/ahead", :merged -> {5, rebased}
+      "claude/mine", :merged -> {5, rebased}
+      _, _ -> nil
+    end
+
+    c = config(p, p, %{"landed" => "merged-pr"})
+
+    assert ".worktrees/ahead [claude/ahead]: PR #5 merged, its commits rebased; 'tidy prune' removes it" in Worktrees.run(
+             c,
+             :report,
+             env(p, prs)
+           )
+
+    # One more commit on the branch than the PR had: unshipped, kept.
+    commit(path.("ahead"), "after the ship")
+
+    assert ".worktrees/ahead [claude/ahead]: PR #5 merged, but 1 commit(s) never shipped; left alone" in Worktrees.run(
+             c,
+             :report,
+             env(p, prs)
+           )
+
+    # A local branch without a worktree, at the rebased-away commit: deleted.
+    assert "branch claude/mine: PR #5 merged, its commits rebased; deleted" in Branches.run(
+             c,
+             :prune,
+             env(p, prs)
+           )
   end
 
   test "branches: stale local ones go in prune; pushed work is reported, never deleted", %{

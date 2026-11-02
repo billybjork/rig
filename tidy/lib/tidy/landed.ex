@@ -5,8 +5,9 @@ defmodule Tidy.Landed do
 
     * `:ancestor`: its tip is an ancestor of `origin/main` (a project that
       ships by pushing `main`, so a landed branch carries nothing more);
-    * `:merged_pr`: a merged pull request's head is its tip. One that
-      merged at an earlier commit leaves the later ones unlanded.
+    * `:merged_pr`: a merged pull request's head has every commit of its
+      tip, as itself or rebased (the same patch). One that merged without
+      some leaves those unlanded.
 
   `verdict/5` returns `{:landed, why}`, `{:after, why}` (merged, but with
   commits since) or `{:ahead, why}` (work not on main, with its PR state).
@@ -29,13 +30,34 @@ defmodule Tidy.Landed do
         {:landed, "PR ##{pr} merged at its tip"}
 
       {pr, head} ->
-        {:after, "PR ##{pr} merged, but #{count(git, "#{head}..#{tip}")} commit(s) came after it"}
+        case unshipped(git, pr, head, tip) do
+          0 -> {:landed, "PR ##{pr} merged, its commits rebased"}
+          n -> {:after, "PR ##{pr} merged, but #{n} commit(s) never shipped"}
+        end
 
       nil ->
         case branch && prs.(branch, :open) do
           nil -> {:ahead, "#{ahead(git, tip)} commit(s) ahead of origin/main, no PR"}
           pr -> {:ahead, "#{ahead(git, tip)} commit(s) ahead of origin/main, PR ##{pr} open"}
         end
+    end
+  end
+
+  # The ship worker rebases a branch before it merges, so the PR's head is a
+  # commit the branch never had (GitHub keeps it as pull/N/head after the
+  # branch is deleted). A commit of the branch is shipped when the PR's head
+  # has it or a commit with the same patch (`git cherry`); a rebase that
+  # resolved a conflict changes the patch, and leaves the commit unshipped.
+  defp unshipped(git, pr, head, tip) do
+    if elem(git.(["cat-file", "-e", head <> "^{commit}"]), 1) != 0,
+      do: git.(["fetch", "--quiet", "origin", "pull/#{pr}/head"])
+
+    case git.(["cherry", head, tip]) do
+      {out, 0} ->
+        out |> String.split("\n", trim: true) |> Enum.count(&String.starts_with?(&1, "+"))
+
+      _ ->
+        "?"
     end
   end
 
