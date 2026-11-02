@@ -38,7 +38,11 @@ be copied between repositories lives here.
   (`rigd/sudoers`) also `pmset disablesleep` so a closed lid doesn't sleep
   the Mac: only on AC or at 30% battery and up, without thermal pressure,
   for 4 h of lid-closed time at most, cleared when work ends and when rigd
-  stops or starts. `Presence` reads lid, lock, and idle time; `Notify` sends
+  stops. macOS decides clamshell sleep only as the lid closes, so when rigd
+  clears it, or lets go once work ends, with the lid closed and no external
+  display, it runs `pmset sleepnow` (Billy, 2026-11-02: remote access drops
+  a minute after the last agent finishes). `Presence` reads lid, lock, and
+  idle time; `Notify` sends
   one ntfy push per agent that finishes (or waits on Billy) while he is
   away, on `NTFY_TOPIC` from `rigd/fnox.toml` (deploy tier, key
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
@@ -74,7 +78,8 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
    - `Awake`: keeps the Mac awake while Activity is not empty; with the lid
      closed it sets `pmset disablesleep` (a sudoers rule for exactly that)
      only above ~30% battery and below thermal pressure, with a time cap,
-     and clears it on exit and at boot. Replaces Amphetamine and manual
+     and clears it on exit and at boot, sleeping the Mac if the lid is
+     closed when it lets go. Replaces Amphetamine and manual
      `caffeinate -dimsu`.
    - `Notify`: away (lid closed, locked, or idle ~5 min) sends one ntfy
      push per finished task on a single topic; present sends nothing extra.

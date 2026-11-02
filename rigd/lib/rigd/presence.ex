@@ -47,6 +47,9 @@ defmodule Rigd.Presence do
     Map.merge(
       %{
         lid_closed: clam =~ ~r/"AppleClamshellState" = Yes/,
+        # No in clamshell mode (an external display): the closed lid alone
+        # wouldn't sleep the Mac. pmset's disablesleep doesn't change it.
+        clamshell_sleeps: clam =~ ~r/"AppleClamshellCausesSleep" = Yes/,
         locked: root =~ ~r/"CGSSessionScreenIsLocked"=Yes/,
         idle_s: idle_seconds(hid)
       },

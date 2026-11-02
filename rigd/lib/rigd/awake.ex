@@ -9,10 +9,19 @@ defmodule Rigd.Awake do
       rigd also sets `pmset -a disablesleep 1` through a sudoers rule for
       exactly that (`rigd/sudoers`). Only on AC power or above
       30% battery, without thermal pressure, and for at most 4 hours of
-      lid-closed time; past any of those it clears it and the Mac sleeps.
-      It is set ahead of the lid closing, since a closed lid sleeps the Mac
-      before rigd could act, and cleared when work ends, when rigd stops, and
-      when it starts (a leftover from a crash or a reboot).
+      lid-closed time. It is set ahead of the lid closing, since a closed
+      lid sleeps the Mac before rigd could act, and cleared when work ends
+      (after the linger), past any of those limits, and when rigd stops.
+    * Sleeping after: macOS decides clamshell sleep only when the lid
+      closes, so clearing disablesleep later leaves the Mac awake with its
+      lid shut (11 h on battery, 2026-11-01). So when rigd clears it, or
+      lets go of the Mac altogether, while the lid is closed and the lid
+      alone would sleep the Mac (no external display), it runs `pmset
+      sleepnow`. caffeinate's assertions don't stop an explicit sleep.
+      Stopping rigd clears disablesleep but never sleeps the Mac (a restart
+      runs mid-work). A disablesleep left set by an earlier run (a crash, a
+      reboot) is kept until Activity and Presence are both read, then
+      decided like any other.
   """
 
   use GenServer
@@ -26,23 +35,35 @@ defmodule Rigd.Awake do
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc """
-  What to hold given whether work runs (`active`, `empty_since` for the
-  linger), Presence, and whether the sudoers rule is in place. Returns
-  `%{hold: bool, disable_sleep: bool, why: text}`.
+  What to hold given whether work runs (`active`, nil until Activity is
+  read; `empty_since` for the linger), Presence, whether the sudoers rule is
+  in place, and what is held now (`disabled`, `holding`). Returns
+  `%{hold: bool, disable_sleep: bool, sleep_now: bool, why: text}`.
   """
-  def plan(%{active: active, empty_since: empty_since, presence: p, sudo: sudo, now: now}) do
-    hold = active or (empty_since != nil and now - empty_since < @linger)
+  def plan(%{
+        active: active,
+        empty_since: empty_since,
+        presence: p,
+        sudo: sudo,
+        now: now,
+        disabled: disabled,
+        holding: holding
+      }) do
+    hold = active == true or (empty_since != nil and now - empty_since < @linger)
 
     blocker =
       cond do
+        active == nil ->
+          {:keep, "activity not read yet"}
+
+        p == nil ->
+          {:keep, "presence not read yet"}
+
         not hold ->
           "nothing runs"
 
         not sudo ->
           "no sudoers rule for pmset (rigd/sudoers)"
-
-        p == nil ->
-          "presence not read yet"
 
         not p.ac and p.battery < @battery_min ->
           "battery #{p.battery}% < #{@battery_min}%"
@@ -57,7 +78,17 @@ defmodule Rigd.Awake do
           nil
       end
 
-    %{hold: hold, disable_sleep: blocker == nil, why: blocker || "work runs"}
+    {disable_sleep, why} =
+      case blocker do
+        nil -> {true, "work runs"}
+        {:keep, why} -> {disabled, why}
+        why -> {false, why}
+      end
+
+    let_go = (disabled and not disable_sleep) or (holding and not hold)
+    lid_sleeps = p != nil and p.lid_closed and p.clamshell_sleeps
+
+    %{hold: hold, disable_sleep: disable_sleep, sleep_now: let_go and lid_sleeps, why: why}
   end
 
   @impl true
@@ -65,17 +96,18 @@ defmodule Rigd.Awake do
     Process.flag(:trap_exit, true)
     Rigd.Bus.subscribe(:activity)
     Rigd.Bus.subscribe(:presence)
-    if sleep_disabled?(), do: set_disable_sleep(false, "left set by an earlier run")
+    disabled = sleep_disabled?()
+    if disabled, do: Logger.info("awake: disablesleep left set by an earlier run")
 
     {:ok,
      %{
-       active: false,
+       active: nil,
        empty_since: nil,
        presence: nil,
        sudo: sudo?(),
        sudo_checked: now(),
        caff: nil,
-       disabled: false,
+       disabled: disabled,
        items: 0
      }}
   end
@@ -116,7 +148,7 @@ defmodule Rigd.Awake do
         do: %{st | sudo: sudo?(), sudo_checked: now()},
         else: st
 
-    plan = plan(Map.put(st, :now, now()))
+    plan = plan(Map.merge(st, %{now: now(), holding: st.caff != nil}))
 
     caff =
       cond do
@@ -136,6 +168,8 @@ defmodule Rigd.Awake do
       if plan.disable_sleep != st.disabled,
         do: set_disable_sleep(plan.disable_sleep, plan.why),
         else: st.disabled
+
+    if plan.sleep_now and not disabled, do: sleep_now(plan.why)
 
     Rigd.Bus.publish(:awake, %{
       holding: caff != nil,
@@ -171,6 +205,16 @@ defmodule Rigd.Awake do
       {out, status} ->
         Logger.warning("awake: sudo pmset disablesleep exited #{status}: #{String.trim(out)}")
         sleep_disabled?()
+    end
+  end
+
+  defp sleep_now(why) do
+    case Rigd.Cmd.run("pmset", ["sleepnow"]) do
+      {_, 0} ->
+        Logger.info("awake: lid closed, sleeping the Mac (#{why})")
+
+      {out, status} ->
+        Logger.warning("awake: pmset sleepnow exited #{status}: #{String.trim(out)}")
     end
   end
 
