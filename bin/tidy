@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Session hygiene for a project checkout with a .tidy.json (rig's
+# tidy/README.md): what finished sessions left behind, and in `prune` the
+# removal of what provably has no owner.
+#
+#   tidy [report|prune] [section...] ...   a mode applies to the sections after it;
+#                                          none after it means every section
+#   tidy self-check                        tidy's own gate
+#
+# Sections: worktrees, branches, databases, processes, simulators. With no
+# arguments every section is reported and nothing changes.
+set -euo pipefail
+tidy=$(cd "$(dirname "${BASH_SOURCE[0]}")/../tidy" && pwd)
+
+case "${1:-}" in
+  self-check) cd "$tidy" && unset MIX_ENV && exec mix check ;;
+  -h | --help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
+esac
+
+# rig's toolchain (tidy/.tool-versions), not the project's; $TIDY_CWD
+# names the checkout.
+dir=$PWD
+cd "$tidy"
+unset MIX_ENV
+mix compile --no-deps-check >&2
+TIDY_CWD=$dir exec mix run --no-compile --no-deps-check --no-start \
+  -e 'System.halt(Tidy.CLI.main(System.argv(), System.fetch_env!("TIDY_CWD")))' -- "$@"

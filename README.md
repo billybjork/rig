@@ -60,6 +60,11 @@ be copied between repositories lives here.
   end pushes on rig's topic (`shipyard/fnox.toml`, `rig-NTFY_TOPIC`) only
   while Billy is away, as rigd's status file says (pushing when rigd is
   not running), and rigd never pushes for a ship.
+- `tidy/` is session hygiene (its own `README.md`; `bin/tidy`): linked
+  worktrees and agent branches whose work landed, databases no checkout
+  derives, dev processes orphaned in removed worktrees, long-booted
+  Simulators. A project's `.tidy.json` says what is its own; soco's and
+  heaters' bootstraps run it (`bin/tidy self-check` is its gate).
 - `launchd/` holds copies of the LaunchAgents rig owns, as installed in
   `~/Library/LaunchAgents`.
 
