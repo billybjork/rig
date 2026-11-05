@@ -5,8 +5,9 @@
 # provision stamp it wants (STAMP), the provision command (PROVISION; with
 # `@image` first, rig's image script, staged as ~/parts/<id>/image.sh), the
 # project's setup script (SETUP), the build caches `git clean` keeps (KEEP),
-# and the caches to warm first (WARM_NAMES, WARM_KEYS, WARM_CMDS); argv
-# holds the command, NUL-separated.
+# the caches to warm first (WARM_NAMES, WARM_KEYS, WARM_CMDS), and what goes
+# on the local disk (LOCAL_PATHS, LOCAL_TOOLS, or LOCAL_OFF for a golden;
+# local.sh); argv holds the command, NUL-separated.
 #
 # Its phases go to ~/parts/<id>/phase ("setup", "warm", "run", each with
 # the time it began), so the laptop holds each to its own limit: the
@@ -21,6 +22,7 @@ id=${1:?usage: job.sh <id>}
 d=~/parts/$id
 NAME= SHA= STAMP= SETUP=
 KEEP=() PROVISION=() WARM_NAMES=() WARM_KEYS=() WARM_CMDS=()
+LOCAL_PATHS=() LOCAL_TOOLS=() LOCAL_OFF=
 . "$d/vars"
 cmd=()
 while IFS= read -r -d '' arg; do cmd+=("$arg"); done <"$d/argv"
@@ -49,13 +51,14 @@ health() {
   echo "sprite-health: $(date -u +%FT%TZ)"
   for resource in cpu io memory; do sed "s/^/sprite-health: $resource /" "/proc/pressure/$resource"; done
   grep -E '^(MemAvailable|SwapFree):' /proc/meminfo | sed 's/^/sprite-health: /'
+  echo "sprite-health: LocalDiskFree: $(df -m /tmp | tail -1 | awk '{print $4}') MB"
   [ ! -r /sys/fs/cgroup/memory.events ] || sed 's/^/sprite-health: cgroup /' /sys/fs/cgroup/memory.events
 }
 (while sleep 30; do health; done) &
 beat=$!
 trap 'kill $beat 2>/dev/null' EXIT
 
-# A Sprite has 16 GiB and no swap, and a cold dialyzer PLT (soco's
+# A Sprite has 8 GiB and no swap, and a cold dialyzer PLT (soco's
 # static-1) took it down mid-build on every try (2026-10-30). 8 GiB of swap
 # on the scratch disk, through a loop device: swapon refuses a file on the
 # root's overlayfs. A restart drops it, so each part checks.
@@ -69,6 +72,8 @@ if [ -r /proc/swaps ] && [ "$(wc -l </proc/swaps)" -le 1 ] && sudo -n true 2>/de
 fi
 
 repo=~/$NAME
+. "$d/local.sh"
+[ -z "$LOCAL_OFF" ] || local_off
 [ -d "$repo/.git" ] || git init -q "$repo"
 cd "$repo" || finish 90
 # An empty bundle means this Sprite already has the commit.
@@ -98,6 +103,8 @@ fi
 have=$(cat ~/"$NAME-stamp" 2>/dev/null || echo none)
 if [ "$have" != "$STAMP" ]; then
   say "provision stamp $have, want $STAMP; refreshing tools"
+  # What it installs belongs on the root disk.
+  local_unmount
   # Absolute paths: a provision script may cd (to /tmp, to download).
   provision=()
   for path in "${PROVISION[@]}"; do provision+=("$repo/$path"); done
@@ -107,11 +114,14 @@ if [ "$have" != "$STAMP" ]; then
     bash "${provision[0]}" "$STAMP" "${provision[@]:1}" || { say "tool refresh failed"; finish 89; }
   fi
   [ "$(cat ~/"$NAME-stamp" 2>/dev/null)" = "$STAMP" ] || { say "tool refresh did not stamp the Sprite"; finish 89; }
+  local_prune_tools
   lap "tools refreshed"
 fi
 [ ! -f ~/"$NAME-env.sh" ] || . ~/"$NAME-env.sh"
 # `sprite exec` sets no SHELL, and erlexec's port program exits 4 without one.
 export SHELL=${SHELL:-/bin/bash}
+# Before anything below touches a build cache, which may then be the copy.
+local_on
 # Mix's build locks live in /tmp. A Sprite that restarts while Mix writes
 # one leaves an empty lock file that every later Mix command fails reading;
 # parts run one at a time per Sprite, so no lock here is live.

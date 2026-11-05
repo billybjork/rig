@@ -8,6 +8,8 @@ restart() { # what a Sprite restarting does to a part: a new life, its processes
 }
 case "$1" in
   green) echo "all good" ;;
+  write-cache) mkdir -p cache && echo "$2" >cache/built ;;
+  cat-cache) cat cache/built 2>/dev/null || echo "cache empty" ;;
   red)
     printf '  1) test the widget works (WidgetTest)\n     test/widget_test.exs:12\n     Assertion with == failed\n\n'
     echo "3 tests, 1 failure"

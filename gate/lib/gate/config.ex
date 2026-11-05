@@ -23,6 +23,10 @@ defmodule Gate.Config do
     * `setup`: the script that readies a checked-out tree before each part
       (databases, deps, Node trees).
     * `keep`: the paths `git clean` keeps between parts (build caches).
+    * `local`: what a part keeps on the Sprite's local disk rather than its
+      slow root disk (`sprite/local.sh`): `paths` (in the checkout, each one
+      also in `keep`, or `~/<path>`) and `tools` (names under `/opt/gate`
+      on the project's PATH, such as `swift`), most important first.
     * `warm`: caches built before a part, outside its limit, when their
       key changes: `name`, `parts` (globs of part names), `key` (files),
       `command`.
@@ -49,6 +53,7 @@ defmodule Gate.Config do
     :weights,
     dev: [],
     keep: [],
+    local: %{},
     warm: [],
     provision_gate: [],
     limits: %{}
@@ -99,11 +104,24 @@ defmodule Gate.Config do
         if(json["image"], do: ["@image" | json["image"]], else: fetch!(json, "provision", path)),
       setup: fetch!(json, "setup", path),
       keep: Map.get(json, "keep", []),
+      local: local!(json, path),
       warm: Map.get(json, "warm", []),
       provision_gate: Map.get(json, "provision_gate", []),
       weights: Map.get(json, "weights"),
       limits: Map.merge(@limits, Map.get(json, "limits", %{}))
     }
+  end
+
+  # `git clean` would empty a checkout's path it does not keep, and that path
+  # is then the local copy.
+  defp local!(json, path) do
+    local = Map.get(json, "local", %{})
+    keep = Map.get(json, "keep", [])
+
+    case Enum.reject(Map.get(local, "paths", []), &(String.starts_with?(&1, "~/") or &1 in keep)) do
+      [] -> local
+      paths -> raise Gate.Error, "#{path}: local paths not in keep: #{Enum.join(paths, ", ")}"
+    end
   end
 
   @doc "A limit in milliseconds."

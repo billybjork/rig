@@ -374,6 +374,148 @@ defmodule Gate.CheckTest do
     cmd =~ "tail -f"
   end
 
+  describe "the local disk" do
+    @describetag gate: %{
+                   "pool" => ["gate-1", "gate-2"],
+                   "keep" => ["cache"],
+                   "local" => %{"paths" => ["cache", "~/data"], "tools" => ["tool"]}
+                 }
+
+    setup %{tmp_dir: tmp, root: root} do
+      local = Fake.local_disk(tmp)
+
+      on_exit(fn ->
+        for var <- ~w(GATE_LOCAL_ROOT GATE_LOCAL_OPT GATE_LOCAL_BUDGET_MB),
+            do: System.delete_env(var)
+      end)
+
+      home = Path.join(root, "gate-1/home")
+      tool = Path.join(local.opt, "tool-1")
+      File.mkdir_p!(Path.join(tool, "bin"))
+      File.write!(Path.join(tool, "bin/the-tool"), "the tool\n")
+      File.mkdir_p!(Path.join(home, "data"))
+      File.write!(Path.join(home, "data/row"), "a row\n")
+      File.write!(Path.join(home, "proj-env.sh"), "export PATH=#{tool}/bin:$PATH\n")
+      Map.merge(local, %{home: home, tool: tool})
+    end
+
+    defp commit_commands(env) do
+      Fake.git(env.top, ["add", "."])
+      Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "cmd"])
+    end
+
+    # The part after it: its log, on a Sprite with one part at a time.
+    defp part(env, command) do
+      File.rm_rf!(env.logs)
+      {status, _out, err} = check(env, [{"one", command}])
+      assert status == 0, err
+      log(env, "gate-1", "one")
+    end
+
+    test "paths and tools are copied once and mounted, and what a part writes lands there",
+         env do
+      log = part(env, "bash cmd.sh write-cache first")
+      assert log =~ "local disk: copied 3, mounted 3 new"
+
+      assert File.read!(Path.join(env.disk, "projects/proj/cache/built")) == "first\n"
+      assert File.read!(Path.join(env.disk, "projects/proj/~%data/row")) == "a row\n"
+      assert File.read!(Path.join(env.disk, "tools/tool-1/bin/the-tool")) == "the tool\n"
+
+      # The same paths read the copy.
+      assert File.read!(Path.join(env.tool, "bin/the-tool")) == "the tool\n"
+      assert File.read!(Path.join(env.home, "proj/cache/built")) == "first\n"
+
+      log = part(env, "bash cmd.sh cat-cache")
+      assert log =~ "first"
+      assert log =~ "local disk: copied 0, mounted 0 new"
+    end
+
+    test "a restart drops the mounts and the next part mounts the same copies", env do
+      part(env, "bash cmd.sh write-cache first")
+      unmount_all(env)
+
+      log = part(env, "bash cmd.sh cat-cache")
+      assert log =~ "first"
+      assert log =~ "local disk: copied 0, mounted 3 new"
+    end
+
+    test "after a restore the copies of paths go, since the root disk went back, and tools stay",
+         env do
+      part(env, "bash cmd.sh write-cache day")
+      unmount_all(env)
+      # The checkpoint holds no token (see the golden test below).
+      File.rm_rf!(Path.join(env.home, ".gate-local"))
+
+      log = part(env, "bash cmd.sh cat-cache")
+      assert log =~ "cache empty"
+      assert log =~ "local disk: copied 2, mounted 3 new"
+    end
+
+    test "a host move empties the disk: all of it is copied again", env do
+      part(env, "bash cmd.sh write-cache first")
+      unmount_all(env)
+      File.rm_rf!(env.disk)
+
+      log = part(env, "bash cmd.sh cat-cache")
+      assert log =~ "cache empty"
+      assert log =~ "local disk: copied 3, mounted 3 new"
+    end
+
+    test "what does not fit stays on the root disk, and the part still passes", env do
+      System.put_env("GATE_LOCAL_BUDGET_MB", "0")
+      log = part(env, "bash cmd.sh write-cache first")
+      assert log =~ "cache stays on the root disk"
+      assert log =~ "tool-1 stays on the root disk"
+      assert log =~ "local disk: copied 0, mounted 0 new"
+      assert File.read!(Path.join(env.home, "proj/cache/built")) == "first\n"
+      refute File.dir?(Path.join(env.disk, "projects/proj/cache"))
+    end
+
+    test "a golden runs on the root disk and leaves no token in its checkpoint", env do
+      part(env, "bash cmd.sh write-cache day")
+      commit_commands(env)
+
+      {status, _out, err} =
+        Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-1") end)
+
+      assert status == 0, err
+
+      refute File.exists?(Path.join(env.home, ".gate-local"))
+      refute Fake.mounted?(Path.join(env.home, "proj/cache"))
+      refute Fake.mounted?(env.tool)
+      refute File.exists?(Path.join(env.disk, "projects"))
+      # The tools' copies keep: they are the same whichever disk.
+      assert File.exists?(Path.join(env.disk, "tools/tool-1.ok"))
+    end
+
+    test "a provision writes to the root disk, and tools no env script names go", env do
+      part(env, "bash cmd.sh green")
+      File.mkdir_p!(Path.join(env.disk, "tools/tool-0"))
+      File.write!(Path.join(env.home, "proj-stamp"), "old\n")
+
+      log = part(env, "bash cmd.sh green")
+      assert log =~ "refreshing tools"
+      refute File.exists?(Path.join(env.disk, "tools/tool-0"))
+      assert File.exists?(Path.join(env.disk, "tools/tool-1"))
+      # Unmounted for it, mounted again after, and not copied again.
+      assert log =~ "local disk: copied 0, mounted 3 new"
+    end
+
+    defp unmount_all(env) do
+      for path <- [Path.join(env.home, "proj/cache"), Path.join(env.home, "data"), env.tool] do
+        {_, 0} = System.cmd("sudo", ["-n", "umount", path], env: [])
+      end
+    end
+  end
+
+  test "a local path in the checkout must be one `git clean` keeps", env do
+    json = Path.join(env.top, ".gate.json")
+    gate = json |> File.read!() |> JSON.decode!()
+    File.write!(json, JSON.encode!(Map.put(gate, "local", %{"paths" => ["_build"]})))
+
+    assert_raise Gate.Error, ~r/local paths not in keep: _build/, fn -> Fake.config(env.top) end
+  end
+
   describe "on the shared pool" do
     @describetag gate: %{"pool" => "fleet"}
 

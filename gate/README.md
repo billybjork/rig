@@ -85,6 +85,27 @@ half-built cache is. A keeper that dies is relaunched. A gate stopped
 from outside (a closed terminal, the worker's alarm, passed on by the lock)
 ends the parts it launched.
 
+## The local disk
+
+A Sprite's root disk, with `/opt/gate` and the repos on it, is Fly's SBD: a
+cache over object storage, where a 4 KB read takes 0.1 to 2 ms warm and 400
+to 1800 ms cold, and a suite's run turns warm blocks cold (2026-11-05). `/tmp`
+is a real local disk. So what a project's `.gate.json` names under `local` is
+copied there and bind-mounted over the original (`sprite/local.sh`, which has
+the rules): the same paths, read and written locally.
+
+The root disk stays the source of truth. A restart drops the mounts, a restore
+drops the project's copies (a token on each disk differs after one), a host
+move empties the local disk, and a golden runs on the root disk, since a
+checkpoint holds only that. Whatever does not copy, fit its budget or mount
+stays where it was and the part's log says `stays on the root disk`, so a part
+is never worse off than without it. `sprite-gate: local disk: ...` is its lap,
+and `sprite-health: LocalDiskFree` what a suite left free.
+
+Copying costs the first part after each of those: about 4 min for Swift (3.6
+GB) after a host move, and a minute or so for a project's own paths after a
+restore.
+
 ## The shared pool
 
 rigd's `Fleet` (`rigd/lib/rigd/fleet.ex`, the plan in `FLEET.md`) keeps

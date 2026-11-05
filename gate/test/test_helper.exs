@@ -117,6 +117,39 @@ defmodule Gate.Fake do
     %{top: top, root: root, logs: logs, tmp: tmp}
   end
 
+  @fake_sudo ~S"""
+  #!/bin/bash
+  # A bind mount as a symlink: the same path, read and written elsewhere.
+  under() { echo "$GATE_LOCAL_ROOT/under/$(echo "$1" | tr / %)"; }
+  shift
+  case "$1" in
+    true) ;;
+    mount)
+      mkdir -p "$GATE_LOCAL_ROOT/under"
+      mv "$4" "$(under "$4")" && ln -s "$3" "$4" ;;
+    umount) rm "$2" && mv "$(under "$2")" "$2" ;;
+    *) exit 1 ;;
+  esac
+  """
+
+  @doc """
+  What a part's local disk needs (`sprite/local.sh`): fake `sudo` and
+  `mountpoint`, the disk at `<tmp>/local`, and `/opt/gate` at `<tmp>/opt`.
+  Returns the two.
+  """
+  def local_disk(tmp) do
+    bin = Path.join(tmp, "bin")
+    executable(Path.join(bin, "sudo"), @fake_sudo)
+    executable(Path.join(bin, "mountpoint"), "#!/bin/bash\n[ -L \"$2\" ]\n")
+    disk = Path.join(tmp, "local")
+    opt = Path.join(tmp, "opt")
+    System.put_env("GATE_LOCAL_ROOT", disk)
+    System.put_env("GATE_LOCAL_OPT", opt)
+    %{disk: disk, opt: opt}
+  end
+
+  def mounted?(path), do: match?({:ok, _}, File.read_link(path))
+
   @doc "Ends what the fake Sprites still run (detached jobs, keepers, `tail -f` clients)."
   def stop(root), do: System.cmd("pkill", ["-f", root])
 

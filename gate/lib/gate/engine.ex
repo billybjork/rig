@@ -193,7 +193,7 @@ defmodule Gate.Engine do
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
 
-    for file <- ["job.sh", "launch.sh"],
+    for file <- ["job.sh", "local.sh", "launch.sh"],
         do: File.cp!(Path.join(Sprite.root(), "sprite/#{file}"), Path.join(dir, file))
 
     if ctx.config.image, do: File.cp!(Gate.Stamp.image(), Path.join(dir, "image.sh"))
@@ -238,6 +238,9 @@ defmodule Gate.Engine do
 
   defp vars(ctx, job) do
     c = ctx.config
+    # A golden's checkpoint holds only the root disk, and `gate run`'s dev
+    # Sprite gets by as it is (`sprite/local.sh`).
+    local = if ctx.seed or job.overlay, do: %{}, else: c.local
 
     """
     NAME=#{q(c.name)} SHA=#{q(ctx.sha)} STAMP=#{q(ctx.stamp)} SETUP=#{q(c.setup)}
@@ -246,6 +249,9 @@ defmodule Gate.Engine do
     WARM_NAMES=(#{qs(Enum.map(job.warm, & &1.name))})
     WARM_KEYS=(#{qs(Enum.map(job.warm, & &1.key))})
     WARM_CMDS=(#{qs(Enum.map(job.warm, & &1.command))})
+    LOCAL_PATHS=(#{qs(Map.get(local, "paths", []))})
+    LOCAL_TOOLS=(#{qs(Map.get(local, "tools", []))})
+    LOCAL_OFF=#{if ctx.seed, do: "1", else: "''"}
     """
   end
 
