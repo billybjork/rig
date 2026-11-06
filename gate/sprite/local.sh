@@ -27,7 +27,7 @@
 # None of this may fail a part: whatever does not copy, fit or mount stays on
 # the root disk, and the log says so.
 #
-# What fits: vdb is 20 GB, of which our swap file takes 8 and something outside
+# What fits: vdb is 20 GB, of which our swap file takes 4 and something outside
 # /tmp grows to about 5.4 (`df` minus `du`, on every Sprite that has worked for
 # a while), so the budget leaves room for a suite's scratch whatever that has
 # grown to. The floor is for a disk fuller than that.

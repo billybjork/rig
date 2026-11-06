@@ -59,15 +59,33 @@ beat=$!
 trap 'kill $beat 2>/dev/null' EXIT
 
 # A Sprite has 8 GiB and no swap, and a cold dialyzer PLT (soco's
-# static-1) took it down mid-build on every try (2026-10-30). 8 GiB of swap
+# static-1) took it down mid-build on every try (2026-10-30). 4 GiB of swap
 # on the scratch disk, through a loop device: swapon refuses a file on the
-# root's overlayfs. A restart drops it, so each part checks.
-if [ -r /proc/swaps ] && [ "$(wc -l </proc/swaps)" -le 1 ] && sudo -n true 2>/dev/null; then
+# root's overlayfs. A restart drops it, so each part checks. Of 1576 logged
+# parts, one used 3.7 GiB and the rest at most 1.6, and the scratch disk is
+# short of room (LocalDiskFree), so it is no longer 8 (2026-11-06).
+swap_drop() { # the file, once nothing holds it
+  local loop
+  for loop in $(sudo losetup -j "$swap" | cut -d: -f1); do
+    # A Sprite's /proc/swaps names it /loop0, not /dev/loop0.
+    if grep -qE "^(/dev)?/${loop##*/} " /proc/swaps; then sudo swapoff "$loop" || return 1; fi
+    sudo losetup -d "$loop" || return 1
+  done
+  sudo rm -f "$swap"
+}
+if [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
   swap=/tmp/gate-swap
-  if [ -f "$swap" ] || sudo fallocate -l 8G "$swap"; then
-    sudo chmod 600 "$swap" && loop=$(sudo losetup -f --show "$swap") && sudo chmod 660 "$loop" &&
-      sudo mkswap "$loop" >/dev/null && sudo swapon "$loop" && say "swap: 8 GiB on $loop" ||
-      say "swap: could not turn it on"
+  swap_bytes=$((4 * 1024 * 1024 * 1024))
+  # Another size is an older part's. Failing to drop it leaves it in use.
+  if [ -f "$swap" ] && [ "$(stat -c %s "$swap")" -ne "$swap_bytes" ]; then
+    swap_drop && say "swap: dropped the old file" || say "swap: could not drop the old file"
+  fi
+  if [ "$(wc -l </proc/swaps)" -le 1 ]; then
+    if [ -f "$swap" ] || sudo fallocate -l "$swap_bytes" "$swap"; then
+      sudo chmod 600 "$swap" && loop=$(sudo losetup -f --show "$swap") && sudo chmod 660 "$loop" &&
+        sudo mkswap "$loop" >/dev/null && sudo swapon "$loop" && say "swap: $(($(stat -c %s "$swap") / 1024 / 1024 / 1024)) GiB on $loop" ||
+        say "swap: could not turn it on"
+    fi
   fi
 fi
 
