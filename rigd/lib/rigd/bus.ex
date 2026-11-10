@@ -1,7 +1,7 @@
 defmodule Rigd.Bus do
   @moduledoc """
   How rigd's parts hear each other: Activity publishes `{:activity, state}`
-  and Presence `{:presence, state}`; a part subscribes to the topics it acts on.
+  Presence `{:presence, state}`, and Closed `{:tabs, tabs}`; a part subscribes to the topics it acts on.
   """
 
   def subscribe(topic), do: Registry.register(__MODULE__, topic, nil)

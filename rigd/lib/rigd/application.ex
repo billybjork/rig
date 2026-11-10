@@ -10,6 +10,7 @@ defmodule Rigd.Application do
           Rigd.Awake,
           Rigd.Notify,
           Rigd.RexBadges,
+          Rigd.Open,
           Rigd.Closed,
           Rigd.Status,
           Rigd.Activity

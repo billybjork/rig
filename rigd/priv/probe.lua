@@ -1,5 +1,7 @@
 -- One snapshot of Rex for rigd (~/dev/rig/rigd): every session's tabs and
--- their terminals (each one's directory, for reopening it once closed), the
+-- their terminals (each one's directory, for reopening it once closed), each
+-- tab's split layout and the server instance (for restoring them after Rex
+-- restarts), the
 -- status each agent in a terminal reports (Claude Code, Codex), and whether
 -- each background terminal's command still runs.
 -- Printed as one JSON line; rigd runs this with `rex do` every few seconds.
@@ -39,6 +41,23 @@ local function cwd(sid, bid)
   end
 end
 
+-- A tab's tiled layout as nested splits of block IDs, without positions.
+local function tree(node)
+  if node == nil then return nil end
+  if node.split then
+    return { split = {
+      direction = node.split.direction,
+      ratio = node.split.ratio,
+      before = tree(node.split.before),
+      after = tree(node.split.after),
+    } }
+  end
+  return { block = node.block_id }
+end
+
+local status = rex.call("server.status") or {}
+local server = { instance_id = status.instance_id, started_at = status.started_at }
+
 local list, err = rex.call("session.list")
 if not list then
   io.stderr:write("session.list failed: " .. tostring(err) .. "\n")
@@ -48,11 +67,12 @@ end
 local sessions = {}
 for _, s in ipairs(list.sessions or {}) do
   local sid = s.session_id
-  local sess = { id = sid, label = s.label or "", windows = {}, detached = {} }
+  local sess = { id = sid, label = s.label or "", server = server, windows = {}, detached = {} }
   local a = rex.call("session.attach", { session_id = sid })
   for _, w in ipairs(a and a.view and a.view.windows or {}) do
     local win = { id = w.window_id, label = w.label or "", blocks = {} }
     for _, l in ipairs(w.layers or {}) do
+      if l.kind == "tiled" then win.layout = tree(l.layout) end
       for _, b in ipairs(l.blocks or {}) do
         if b.creator_name == TERMINAL then
           local blk = {

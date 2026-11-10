@@ -107,7 +107,8 @@ defmodule Rigd.Activity do
   end
 
   @doc """
-  Each tab with its tiled panes (directory, title, agent), for Closed.
+  Each tab with its tiled panes (directory, title, agent), its split layout
+  of block IDs, and the Rex server instance it is in, for Closed and Open.
   """
   def tabs(sessions) do
     for s <- sessions, w <- s["windows"] do
@@ -122,7 +123,9 @@ defmodule Rigd.Activity do
         session: s["label"],
         window_id: w["id"],
         label: w["label"],
-        panes: panes
+        panes: panes,
+        layout: w["layout"],
+        server: s["server"]
       }
     end
   end

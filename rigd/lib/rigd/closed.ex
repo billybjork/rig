@@ -16,6 +16,9 @@ defmodule Rigd.Closed do
   opens or closes (`priv/events.lua`, run with `rex do --all`), since a tab
   open for less than a tick falls between two ticks. Two looks can arrive
   out of order, so a pane once recorded is never recorded again.
+
+  Each look's tabs, with their Claude sessions, go out as `{:tabs, tabs}`
+  for Open.
   """
 
   use GenServer
@@ -90,6 +93,7 @@ defmodule Rigd.Closed do
   defp look(tabs, blocks, st) do
     claude = claude_sessions(tabs, st.claude)
     tabs = for t <- tabs, do: %{t | panes: Enum.map(t.panes, &with_claude(&1, claude))}
+    Rigd.Bus.publish(:tabs, tabs)
 
     gone = if st.tabs, do: st.tabs |> closed(tabs, blocks) |> unseen(st.written), else: []
     if gone != [], do: write(gone, DateTime.utc_now() |> DateTime.truncate(:second))

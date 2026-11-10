@@ -27,6 +27,13 @@ be copied between repositories lives here.
   reopens a tab or pane that closed lately as a new tab in its session, each
   pane at its directory and a Claude pane as `claude --resume`. rigd's
   `Closed` records them in `~/.local/state/rig/closed.jsonl`.
+- "Restore Sessions" (palette; `rex/restore.lua`, `bin/restore`) brings
+  back the sessions open before Rex last restarted (a reboot, a crash): each
+  by name, its tabs and splits, each pane at its directory and a Claude pane
+  as `claude --resume`. rigd's `Open` keeps what is open in
+  `~/.local/state/rig/open.json` (a change written once it has held 20 s, so
+  a shutdown's closing tabs don't count) and moves it to `previous/` when
+  Rex restarts, keeping five.
 - `agents/skills/` holds the skills every project shares, each linked into
   `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
 - `rigd/` is the daemon (Elixir, a KeepAlive LaunchAgent `com.billy.rigd`;
@@ -47,7 +54,8 @@ be copied between repositories lives here.
   away, on `NTFY_TOPIC` from `rigd/fnox.toml` (deploy tier, key
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
   has a background shell. `Closed` records each tab and pane that closes, with
-  its Claude session, for "Recently Closed". `Fleet` keeps the shared pool of gate Sprites
+  its Claude session, for "Recently Closed", and `Open` what is open, for
+  "Restore Sessions". `Fleet` keeps the shared pool of gate Sprites
   that `gate/fleet.json` names golden and leases them to gates on a Unix
   socket (`gate/FLEET.md`). `bin/rigd status` shows what it sees and
   `bin/rigd fleet` the pool; the decisions are tested (`mix check` in

@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Restore the sessions that were open before Rex last restarted (a reboot, a
+# crash), as rigd saves them (rigd/lib/rigd/open.ex), for the palette's
+# "Restore Sessions" (rex/restore.lua).
+#
+#   restore ls            the saved sets, newest first, numbered
+#   restore pick [BLOCK]  choose one and restore it; cancelling focuses BLOCK
+#   restore open [N]      restore set N (default 1): each session by its
+#                         name, each tab with its splits, each pane at its
+#                         directory and a Claude pane resumed
+#
+# A tab whose Claude sessions all run already is skipped, so restoring twice
+# doesn't open a conversation twice. Other tabs are opened again each time.
+set -euo pipefail
+
+dir=$HOME/.local/state/rig/previous
+terminal=com.superlogical.terminal
+fail() { echo "restore: $*" >&2; exit 1; }
+
+# The saved sets, newest first (named by when each was last written).
+sets() { ls -1 "$dir"/*.json 2>/dev/null | sort -r; }
+
+list() {
+  local n=0 f
+  while IFS= read -r f; do
+    n=$((n + 1))
+    jq -r --argjson n "$n" '
+      def when: .at | fromdateiso8601 | strflocaltime("%a %b %-d %H:%M");
+      [.sessions[] | select(.tabs != [])] as $s
+      | ([$s[].tabs[]] | length) as $t
+      | "\($n). \(when)  \($s | length) sessions, \($t) tabs: \([$s[].session] | join(", "))"' "$f"
+  done < <(sets)
+}
+
+# The Claude sessions running now, one ID per line.
+running_claude() {
+  local f pid
+  for f in "$HOME"/.claude/sessions/*.json; do
+    [ -e "$f" ] || continue
+    pid=$(basename "$f" .json)
+    kill -0 "$pid" 2>/dev/null && jq -r '.sessionId // empty' "$f"
+  done
+  return 0
+}
+
+restore_set() {
+  local n=${1:-1} f running live label tabs sid count
+  f=$(sets | sed -n "${n}p")
+  [ -n "$f" ] || fail "no saved set number $n (restore ls)"
+  running=$(running_claude | jq -Rsc 'split("\n") | map(select(. != ""))')
+  live=$(rex ls --json | jq -c '[.sessions[] | {label, session_id}]')
+
+  # Each tab as session.new_window's input. Each pane a shell at its
+  # directory; a Claude pane runs claude --resume in an interactive login zsh
+  # (Billy's PATH), and stays a shell once it exits. A default label
+  # ("Window 89abcdef") is left for Rex to make anew.
+  jq -c --arg t "$terminal.shell" --argjson running "$running" '
+    def pane: {block: {flavor: $t, options: ({cwd} + (if .claude_session then {command: (
+        ["/bin/zsh", "-lic", "claude \"$@\"; exec zsh -l", "zsh", "--resume", .claude_session]
+        + (if .skip_permissions then ["--dangerously-skip-permissions"] else [] end))} else {} end)
+      | with_entries(select(.value != null)))}};
+    def node: if .split then {split: (.split | {direction, ratio, before: (.before | node), after: (.after | node)}
+        | with_entries(select(.value != null)))} else pane end;
+    def claudes: [.. | objects | .claude_session? // empty];
+    def done: claudes as $c | ($c != []) and all($c[]; . as $id | $running | index($id));
+    .sessions[]
+    | {session, tabs: [.tabs[] | select(done | not)
+        | {layout: (.layout | node)}
+          + (if (.label | test("^(⚙ )?Window [0-9a-f]{8}$")) then {} else {window_label: (.label | sub("^⚙ "; ""))} end)]}
+    | select(.tabs != [])' "$f" |
+  while IFS= read -r s; do
+    label=$(jq -r .session <<<"$s")
+    tabs=$(jq -c .tabs <<<"$s")
+    count=$(jq length <<<"$tabs")
+    sid=$(jq -r --arg l "$label" 'map(select(.label == $l)) | .[0].session_id // empty' <<<"$live")
+    if [ -n "$sid" ]; then
+      jq -c '.[]' <<<"$tabs" | while IFS= read -r w; do
+        rex api call -s "$sid" session.new_window "$w" >/dev/null || echo "restore: $label: a tab did not open" >&2
+      done
+      echo "$label: $count tabs added"
+    else
+      rex api call session.create "$(jq -nc --arg l "$label" --argjson w "$tabs" '{label: $l, initial_windows: $w}')" >/dev/null &&
+        echo "$label: restored with $count tabs" || echo "restore: $label did not restore" >&2
+    fi
+  done
+}
+
+case "${1:-}" in
+  ls) list ;;
+  open) restore_set "${2:-1}" ;;
+  pick)
+    # Run in a tab of its own (rex/restore.lua), which closes when this exits.
+    back=${2:-}
+    lines=$(list)
+    if [ -z "$lines" ]; then
+      echo "Nothing saved from before Rex restarted."; sleep 2
+    else
+      printf '\n  Sessions saved before Rex restarted, newest first\n\n%s\n\n' "$lines"
+      if read -rp "Restore which (Enter for 1, q cancels)? " n && [ "$n" != q ]; then
+        restore_set "${n:-1}"; sleep 3  # leave what happened up to read
+      fi
+    fi
+    [ -z "$back" ] || rex focus -s "$REX_SESSION" "$back" >/dev/null 2>&1 || true
+    ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
+esac
