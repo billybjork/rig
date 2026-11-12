@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Pictures and clips in a Rex pane beside the agent; Billy's answer comes
+# back as JSON. The guide: look/README.md in rig.
+exec python3 "$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/look/look.py" "$@"

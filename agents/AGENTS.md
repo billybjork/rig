@@ -25,6 +25,13 @@ Billy works in Rex and wants his tabs uncluttered (Billy, 2026-10-28).
 
   `bg ls` lists your session's background terminals. A project's watch
   commands (a ship's wait) already use one.
+- **Visual questions go in a pane** (`~/dev/rig/bin/look`). When Billy's
+  call depends on seeing images or clips (which mask, which cut, which of
+  these are wrong), `look ask "<question>" <files>` shows them beside you
+  and prints his answer as JSON; `look show` is for a glance. It steers you
+  and is never a record: kept judgments go through the product's own review
+  surface, shared or lasting material is a published page
+  (`~/dev/rig/look/README.md`).
 - **Another agent session** (Claude, Codex) still opens as a visible pane
   **to the right** of yours (the `handoff` skill does this).
 - **No new tabs or sessions** unless Billy asks. The ship workers' session

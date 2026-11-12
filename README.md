@@ -23,6 +23,9 @@ be copied between repositories lives here.
   shows); `rex/background.lua` adds the palette's "Background: Show" (a
   picker when there are several) and "Background: Hide This Pane". `bin/` is
   on Billy's PATH (`~/.zshrc`).
+- `bin/look` (`look/`, its `README.md`) shows images and clips in a Rex
+  pane beside the agent with the kitty graphics protocol and returns
+  Billy's pick, named answer, marks, or note as JSON (`look self-check`).
 - "Recently Closed" (palette, Shift+Cmd+T; `rex/closed.lua`, `bin/closed`)
   reopens a tab or pane that closed lately as a new tab in its session, each
   pane at its directory and a Claude pane as `claude --resume`. rigd's
