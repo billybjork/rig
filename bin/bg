@@ -4,7 +4,9 @@
 # way but still a real terminal an agent can wait on, read, and close, and
 # Billy can bring into view from the palette ("Background: Show").
 #
-#   bg run [--label TEXT] [--cwd DIR] -- COMMAND...   start it; prints the block
+#   bg run [--label TEXT] [--cwd DIR] [--heavy cpu|net] -- COMMAND...
+#                                                     start it; prints the block. --heavy
+#                                                     runs it in its turn (bin/heavy)
 #   bg ls                                             this session's background terminals
 #   bg show BLOCK                                     place it below the calling pane
 #   bg hide [BLOCK]                                   take a pane (default: this one) out of its tab
@@ -26,16 +28,20 @@ command -v jq >/dev/null || fail "needs jq"
 case "${1:-}" in
   run)
     shift
-    label=bg cwd=$PWD
+    label=bg cwd=$PWD heavy=
     while [ $# -gt 0 ]; do
       case "$1" in
         --label) label=$2; shift 2 ;;
         --cwd) cwd=$2; shift 2 ;;
+        --heavy) heavy=$2; shift 2 ;;
         --) shift; break ;;
         *) break ;;
       esac
     done
-    [ $# -gt 0 ] || fail "usage: bg run [--label TEXT] [--cwd DIR] -- COMMAND..."
+    [ $# -gt 0 ] || fail "usage: bg run [--label TEXT] [--cwd DIR] [--heavy cpu|net] -- COMMAND..."
+    if [ -n "$heavy" ]; then
+      set -- "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/heavy" "$heavy" --label "$label" -- "$@"
+    fi
     # The command reaches jq as NUL-separated input, so its own flags are
     # never read as jq's.
     args=$(printf '%s\0' "$@" | jq -Rs --arg label "$label" --arg cwd "$cwd" \

@@ -20,7 +20,7 @@ be copied between repositories lives here.
   `bws secret`, Keychain token lookups, and reading `.env`; a script an
   agent runs (a `just` recipe, `bin/shipyard`) is not affected.
 - `bin/bg` runs a command in a Rex background terminal (a block no tab
-  shows); `rex/background.lua` adds the palette's "Background: Show" (a
+  shows; `--heavy cpu|net` runs it in its turn through `bin/heavy`); `rex/background.lua` adds the palette's "Background: Show" (a
   picker when there are several) and "Background: Hide This Pane". `bin/` is
   on Billy's PATH (`~/.zshrc`).
 - `bin/look` (`look/`, its `README.md`) shows images and clips in a Rex
@@ -58,7 +58,14 @@ be copied between repositories lives here.
   `rig-NTFY_TOPIC`); `RexBadges` marks a tab ⚙ while its idle agent still
   has a background shell. `Closed` records each tab and pane that closes, with
   its Claude session, for "Recently Closed", and `Open` what is open, for
-  "Restore Sessions". `Fleet` keeps the shared pool of gate Sprites
+  "Restore Sessions". `Heavy` queues heavy local jobs (`bin/heavy cpu|net
+  -- <command>`, `bg run --heavy`): 2 CPU slots and 1 for the uplink,
+  held while the job runs, on `~/Library/Caches/rigd/heavy.sock`; while
+  the 5-minute load is at the cores or more it puts any agent's or
+  terminal's job that keeps 150% CPU without a slot in the background
+  (`taskpolicy -b`), and back once the load is under three quarters
+  (Billy, 2026-11-16: five sessions' media jobs and an uploading eval
+  starved the gates). `bin/rigd heavy` shows it. `Fleet` keeps the shared pool of gate Sprites
   that `gate/fleet.json` names golden and leases them to gates on a Unix
   socket (`gate/FLEET.md`). `bin/rigd status` shows what it sees and
   `bin/rigd fleet` the pool; the decisions are tested (`mix check` in

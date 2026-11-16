@@ -1,0 +1,66 @@
+#!/usr/bin/perl
+# Runs a heavy local job in its turn: takes a slot from rigd's Heavy
+# (rigd/lib/rigd/heavy.ex), waiting while the slots are taken, and holds it
+# while COMMAND runs.
+#
+#   heavy cpu [--label TEXT] -- COMMAND...   keeps cores busy: renders, ML, a local eval (2 at once)
+#   heavy net [--label TEXT] -- COMMAND...   keeps the uplink busy: uploading media (1 at once)
+#
+# Exits with COMMAND's status. TERM, INT and HUP pass to COMMAND. With rigd
+# not answering, COMMAND runs at once, saying so. A job that keeps 150% CPU
+# or more without a slot while the laptop is overloaded is put in the
+# background by rigd (`rigd heavy` shows what was).
+use strict;
+use warnings;
+use Cwd ();
+use IO::Socket::UNIX;
+use JSON::PP ();
+use Socket ();
+
+my $usage = "usage: heavy cpu|net [--label TEXT] -- COMMAND...\n";
+my $kind = shift @ARGV // '';
+$kind =~ /\A(cpu|net)\z/ or do { print STDERR $usage; exit 64 };
+my $label;
+while (@ARGV) {
+    if ($ARGV[0] eq '--label') { shift @ARGV; $label = shift @ARGV }
+    elsif ($ARGV[0] eq '--') { shift @ARGV; last }
+    else { last }
+}
+@ARGV or do { print STDERR $usage; exit 64 };
+my $cwd = Cwd::getcwd();
+$label //= join(' ', @ARGV);
+$label = substr("$label (" . (split m{/}, $cwd)[-1] . ")", 0, 120);
+
+my $json = JSON::PP->new->canonical;
+my $path = $ENV{RIGD_HEAVY_SOCKET} // "$ENV{HOME}/Library/Caches/rigd/heavy.sock";
+my $sock = IO::Socket::UNIX->new(Type => Socket::SOCK_STREAM(), Peer => $path);
+
+if ($sock) {
+    $sock->autoflush(1);
+    print $sock $json->encode({take => {kind => $kind, label => $label, pid => $$, cwd => $cwd}}), "\n";
+    my $granted = 0;
+    while (my $line = <$sock>) {
+        my $msg = eval { $json->decode($line) } or next;
+        if ($msg->{granted}) { $granted = 1; last }
+        if (my $w = $msg->{waiting}) {
+            my $holders = join('; ', @{ $w->{holders} || [] }) || 'none';
+            printf STDERR "heavy: waiting for a %s slot (%d ahead; holding: %s)\n", $kind, $w->{ahead}, $holders;
+        }
+    }
+    print STDERR "heavy: rigd went before granting a slot; running without one\n" unless $granted;
+} else {
+    print STDERR "heavy: rigd does not answer on $path; running without a slot\n";
+}
+
+my $pid = fork();
+defined $pid or die "heavy: fork: $!\n";
+if ($pid == 0) {
+    close $sock if $sock;
+    exec { $ARGV[0] } @ARGV or do { print STDERR "heavy: $ARGV[0]: $!\n"; exit 127 };
+}
+for my $sig (qw(TERM INT HUP)) {
+    $SIG{$sig} = sub { kill $sig, $pid };
+}
+while (waitpid($pid, 0) == -1) { last unless $!{EINTR} }
+my $status = $?;
+exit($status & 127 ? 128 + ($status & 127) : $status >> 8);

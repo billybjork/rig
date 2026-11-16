@@ -5,6 +5,7 @@
 #   rigd install     build the release, install the LaunchAgent, (re)start it
 #   rigd status      what it sees: what runs, presence, keep-awake
 #   rigd fleet       the shared gate pool: each Sprite's state, the stamps
+#   rigd heavy       heavy local jobs: who holds a slot, who waits, what was demoted
 #   rigd log         follow its log
 #   rigd restart     restart it under launchd
 #   rigd sudoers     install the pmset rule lid-closed keep-awake needs (asks for a password)
@@ -63,6 +64,37 @@ for name, v in sorted(d["sprites"].items(), key=lambda kv: int(kv[0].rsplit("-",
     extra += [v["why"]] if v["why"] else []
     extra += [f"served {' '.join(v['served'])}"] if v["served"] else []
     print(f"{name:12} {v['status']:13} {'; '.join(extra)}".rstrip())
+PY
+      ;;
+    heavy)
+      # Heavy's socket (rigd/lib/rigd/heavy.ex), one JSON line per message.
+      python3 - <<'PY'
+import json, os, socket, sys, time
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(30)
+try:
+    s.connect(os.path.expanduser("~/Library/Caches/rigd/heavy.sock"))
+except OSError as e:
+    sys.exit(f"rigd: Heavy does not answer ({e})")
+s.sendall(b'{"status": {}}\n')
+b = b""
+while not b.endswith(b"\n"):
+    c = s.recv(65536)
+    if not c:
+        break
+    b += c
+d = json.loads(b)
+now = time.time()
+print("slots:   " + "  ".join(f"{k} {v}" for k, v in sorted(d["slots"].items())))
+for title, rows in (("holding", d["holders"]), ("waiting", d["waiting"])):
+    for r in rows or [{}]:
+        if not r:
+            print(f"{title}: none")
+            continue
+        mins = int((now - r["since"]) / 60)
+        print(f"{title}: {r['kind']:3} {r['label']} ({r.get('cwd') or '?'}, {mins} min)")
+for r in d["demoted"]:
+    print(f"demoted: {r['cmd']} (pid {r['root']}, {round(r['cpu'])}% CPU)")
 PY
       ;;
     log) tail -n 40 -f "$HOME/Library/Logs/rigd.log" ;;

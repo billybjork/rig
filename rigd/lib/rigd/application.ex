@@ -13,7 +13,8 @@ defmodule Rigd.Application do
           Rigd.Open,
           Rigd.Closed,
           Rigd.Status,
-          Rigd.Activity
+          Rigd.Activity,
+          Rigd.Heavy
         ],
         else: []
 

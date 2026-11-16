@@ -25,6 +25,14 @@ Billy works in Rex and wants his tabs uncluttered (Billy, 2026-10-28).
 
   `bg ls` lists your session's background terminals. A project's watch
   commands (a ship's wait) already use one.
+- **Heavy local jobs wait their turn** (`~/dev/rig/bin/heavy`; Billy,
+  2026-11-16). A run that keeps cores busy for more than a minute (a
+  render, ML, a local eval, a pool of workers) starts as `bg run --heavy cpu
+  -- <command>`, and one that uploads media as `--heavy net`: the laptop
+  holds 2 and 1 at once and the rest queue, so the gates' uploads and the
+  agents keep their share. A big run belongs on Modal or a Sprite. A job
+  without a slot that keeps 150% CPU while the laptop is overloaded is put
+  in the background by rigd; `rigd heavy` shows the slots and what it did.
 - **Visual questions go in a pane** (`~/dev/rig/bin/look`). When Billy's
   call depends on seeing images or clips (which mask, which cut, which of
   these are wrong), `look ask "<question>" <files>` shows them beside you
