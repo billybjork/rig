@@ -122,7 +122,8 @@ in the project.
   and slowest part, and the cause of a red, a retry, or a ship that landed
   but is not live: a red gate is `static` (a part other than the suite),
   `timing` (the digest names a timeout) or `test`; others include
-  `sprite`, `sprite-rerun`, `main-moved`, `conflict`, `history`, `roll`
+  `sprite`, `laptop` (no verdict with the laptop overloaded: its 5-minute
+  load at its cores or more), `sprite-rerun`, `main-moved`, `conflict`, `history`, `roll`
   and `health`. `bin/shipyard list <project> --summary [since]` gives
   gate time p50 and p90 per tier, the queue wait, and the causes.
 

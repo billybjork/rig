@@ -38,4 +38,15 @@ defmodule Shipyard.EntryTest do
     System.delete_env("RIG")
     assert Shipyard.Entry.gate_rig(ship) == []
   end
+
+  test "a gate without a verdict on an overloaded laptop is the laptop's, not a Sprite's" do
+    assert {:retry, text, "laptop"} = Shipyard.Entry.retry("no verdict", "sprite", {90.6, 12})
+    assert text == "no verdict, with the laptop overloaded (load 90.6 on 12 cores)"
+
+    assert {:retry, "no verdict", "sprite"} =
+             Shipyard.Entry.retry("no verdict", "sprite", {4.0, 12})
+
+    assert {:retry, "exited 142", "gate-exit-142"} =
+             Shipyard.Entry.retry("exited 142", "gate-exit-142", nil)
+  end
 end

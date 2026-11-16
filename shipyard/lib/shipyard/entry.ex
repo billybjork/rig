@@ -16,7 +16,8 @@ defmodule Shipyard.Entry do
   body of its PR comment; `:retry` leaves it queued, and `text` says why.
   `cause` is one word for the trial's record (`Shipyard.Record`): `test`,
   `timing` or `static` for a red gate, `sprite` for a gate with no
-  verdict, and the step's own word otherwise. `gate` is what the split
+  verdict (`laptop` when the laptop was overloaded as it ended), and the
+  step's own word otherwise. `gate` is what the split
   gate's run reported (`%{tier, secs, slowest, reran}`), or `%{}` when no
   gate ran.
   """
@@ -181,13 +182,41 @@ defmodule Shipyard.Entry do
            red_cause(out, run)}
 
         2 ->
-          {:retry, "no verdict: a Sprite failed and no other could rerun its part", "sprite"}
+          retry("no verdict: a Sprite failed and no other could rerun its part", "sprite", load())
 
         status ->
-          {:retry, "check-remote exited #{status}", "gate-exit-#{status}"}
+          retry("check-remote exited #{status}", "gate-exit-#{status}", load())
       end
 
     {verdict, gate || %{tier: tier}}
+  end
+
+  @doc """
+  A gate without a verdict, as a retry: its cause is `laptop` when the
+  laptop was overloaded as it ended (`load` is `{5-minute load, cores}`),
+  since the parts' uploads and polls then outlast their limits whatever the
+  Sprites do (2026-11-16: load 90 on 12 cores, soco #777's gate 4205 s).
+  """
+  def retry(text, _cause, {load, cores}) when load >= cores,
+    do: {:retry, "#{text}, with the laptop overloaded (load #{load} on #{cores} cores)", "laptop"}
+
+  def retry(text, cause, _load), do: {:retry, text, cause}
+
+  defp load do
+    case Application.fetch_env(:shipyard, :load) do
+      {:ok, load} -> load
+      :error -> read_load()
+    end
+  end
+
+  defp read_load do
+    with {out, 0} <- System.cmd("sysctl", ["-n", "vm.loadavg"], stderr_to_stdout: true),
+         [_, five | _] <- out |> String.trim(" {}\n") |> String.split(),
+         {load, _} <- Float.parse(five) do
+      {load, System.schedulers_online()}
+    else
+      _ -> nil
+    end
   end
 
   # A red gate's cause: a red part that is not the suite is `static`
