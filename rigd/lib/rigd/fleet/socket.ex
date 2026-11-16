@@ -3,7 +3,7 @@ defmodule Rigd.Fleet.Socket do
   The fleet's Unix socket (`~/Library/Caches/rigd/fleet.sock`), one JSON
   object per line each way:
 
-      → {"lease": {"project": "soco", "part": "static-1", "prefer": ["rig-gate-3"]}}
+      → {"lease": {"project": "soco", "part": "static-1", "prefer": ["rig-gate-3"], "priority": "ship"}}
       ← {"granted": "rig-gate-3"}                 (when one is idle; until then nothing)
       → {"release": {"sprite": "rig-gate-3", "result": "green"}}
       ← {"released": "rig-gate-3"}
@@ -14,7 +14,9 @@ defmodule Rigd.Fleet.Socket do
   dies closes its connection, and the Sprite it held ends its parts before
   it is leased again. `result` is `green` or `red` (the part ran), `restarted`
   (its Sprite restarted or went unreachable), `failed` (the Sprite failed
-  it otherwise) or `crashed` (a native crash).
+  it otherwise) or `crashed` (a native crash). `priority` `ship` (a ship
+  worker's gate) waits ahead of every other lease; anything else is a
+  session's.
   """
 
   use GenServer
@@ -77,7 +79,8 @@ defmodule Rigd.Fleet.Socket do
   end
 
   defp handle(_sock, %{"lease" => %{"project" => project} = lease}, nil) do
-    Rigd.Fleet.lease(self(), project, Map.get(lease, "prefer", []))
+    priority = if lease["priority"] == "ship", do: :ship, else: :session
+    Rigd.Fleet.lease(self(), project, Map.get(lease, "prefer", []), priority)
     nil
   end
 

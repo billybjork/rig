@@ -122,7 +122,10 @@ on it: each part, its first run and its rerun alike, waits for a Sprite
 leased on `~/Library/Caches/rigd/fleet.sock` (`lib/gate/lease.ex`) and
 gives it back as it ends (`green`, `red`, `failed`, `crashed`), so `gate
 check` needs no spare, only a free Sprite per part as they come; with rigd
-down it exits 2. `gate pool` is then `Fleet`'s, not the project's.
+down it exits 2. A fleet gate holds no pool lock, so a session's own `gate
+check` and a ship's run side by side, and a ship's parts (`SHIPYARD_STATUS_ID`
+set) lease ahead of every session's (2026-11-16: a session's gate held soco's
+worker for 19 minutes, and 258 waits in the workers' logs). `gate pool` is then `Fleet`'s, not the project's.
 
 ## The contract
 
@@ -133,8 +136,8 @@ part's log as `<logs>/<sprite>-<run>-<part>.log`, whose last line is
 `sprite-gate: exit <status>` when its command ran; Rex program status per
 part as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
 
-A gate and every pool command but `status` hold the project's pool lock,
-and `gate run` its dev Sprite's (`libexec/lock`, the machine gate lock's
+A gate on a project's own pool and every pool command but `status` hold
+the project's pool lock, and `gate run` its dev Sprite's (`libexec/lock`, the machine gate lock's
 protocol on files under the project's `locks`), so two never share a
 Sprite. The projects keep their own `gate-lock.sh` for the machine lock:
 their suites run it on the Sprites, where there is no rig.

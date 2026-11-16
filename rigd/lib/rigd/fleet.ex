@@ -6,7 +6,9 @@ defmodule Rigd.Fleet do
   Gates reach it on a Unix socket (`Rigd.Fleet.Socket`).
 
   A lease goes to the first waiter, oldest first, as soon as a Sprite is
-  idle and golden: one the waiter's `prefer` names, else one that served
+  idle and golden, a ship's gate's waiters (`priority` `ship`) before every
+  session's own gate's: a session's `gate check` held soco's ship worker
+  for 19 minutes on 2026-11-16, and 258 times in the workers' logs. The Sprite: one the waiter's `prefer` names, else one that served
   its project since its last restore (its tree and build caches are
   there), else any. A waiter that goes leaves the queue.
 
@@ -34,9 +36,12 @@ defmodule Rigd.Fleet do
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "Queues `holder` for a Sprite; it gets `{:fleet_granted, sprite}` when one is leased to it."
-  def lease(holder, project, prefer \\ []),
-    do: GenServer.cast(__MODULE__, {:lease, holder, project, prefer})
+  @doc """
+  Queues `holder` for a Sprite; it gets `{:fleet_granted, sprite}` when one
+  is leased to it. A `:ship` waiter goes ahead of every `:session` one.
+  """
+  def lease(holder, project, prefer \\ [], priority \\ :session),
+    do: GenServer.cast(__MODULE__, {:lease, holder, project, prefer, priority})
 
   def release(sprite, holder, result), do: Sprite.release(sprite, holder, result)
 
@@ -122,10 +127,10 @@ defmodule Rigd.Fleet do
   end
 
   @impl true
-  def handle_cast({:lease, holder, project, prefer}, st) do
+  def handle_cast({:lease, holder, project, prefer, priority}, st) do
     ref = Process.monitor(holder)
-    waiter = %{holder: holder, ref: ref, project: project, prefer: prefer}
-    {:noreply, grant(%{st | queue: st.queue ++ [waiter]})}
+    waiter = %{holder: holder, ref: ref, project: project, prefer: prefer, priority: priority}
+    {:noreply, grant(%{st | queue: enqueue(st.queue, waiter)})}
   end
 
   def handle_cast({:turn, pid}, st) do
@@ -206,7 +211,15 @@ defmodule Rigd.Fleet do
 
   def handle_info(_, st), do: {:noreply, st}
 
-  # Leases idle Sprites to the waiters, oldest first.
+  @doc "The queue with `waiter` behind every waiter of its priority or higher: ships, then sessions."
+  def enqueue(queue, %{priority: :ship} = waiter) do
+    {ships, sessions} = Enum.split_with(queue, &(Map.get(&1, :priority) == :ship))
+    ships ++ [waiter] ++ sessions
+  end
+
+  def enqueue(queue, waiter), do: queue ++ [waiter]
+
+  # Leases idle Sprites to the waiters in the queue's order.
   defp grant(%{queue: []} = st), do: st
 
   defp grant(st) do

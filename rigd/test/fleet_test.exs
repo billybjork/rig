@@ -154,9 +154,11 @@ defmodule Rigd.FleetTest do
     end
   end
 
-  defp lease(opts, project \\ "proj", prefer \\ []) do
+  defp lease(opts, project \\ "proj", prefer \\ [], priority \\ nil) do
     sock = connect(opts)
-    send_line(sock, %{lease: %{project: project, part: "p", prefer: prefer}})
+    lease = %{project: project, part: "p", prefer: prefer}
+    lease = if priority, do: Map.put(lease, :priority, priority), else: lease
+    send_line(sock, %{lease: lease})
     sock
   end
 
@@ -190,6 +192,39 @@ defmodule Rigd.FleetTest do
 
     send_line(c, %{status: %{}})
     assert %{"sprites" => %{"rig-gate-2" => %{"status" => "leased"}}} = recv(c)
+  end
+
+  test "a ship's gate leases ahead of every session's own gate waiting before it",
+       %{root: root, opts: opts} do
+    for s <- opts[:sprites], do: golden_sprite(root, s, @stamp)
+    start(opts)
+    until(fn -> Enum.all?(opts[:sprites], &(status(&1) == :idle)) end)
+
+    [{first, held} | _] =
+      for _ <- opts[:sprites] do
+        sock = lease(opts)
+        assert %{"granted" => sprite} = recv(sock)
+        {sock, sprite}
+      end
+
+    session = lease(opts)
+    assert recv(session, 300) == :timeout
+    ship = lease(opts, "proj", [], "ship")
+    assert recv(ship, 300) == :timeout
+
+    send_line(first, %{release: %{sprite: held, result: "green"}})
+    assert %{"released" => _} = recv(first)
+    assert %{"granted" => _} = recv(ship)
+    assert recv(session, 300) == :timeout
+  end
+
+  test "enqueue: ships in arrival order, then sessions in theirs" do
+    s1 = %{id: :s1, priority: :session}
+    s2 = %{id: :s2, priority: :session}
+    p1 = %{id: :p1, priority: :ship}
+    p2 = %{id: :p2, priority: :ship}
+    queue = Enum.reduce([s1, p1, s2, p2], [], &Fleet.enqueue(&2, &1))
+    assert Enum.map(queue, & &1.id) == [:p1, :p2, :s1, :s2]
   end
 
   test "a holder that goes without releasing has its parts ended before the Sprite is idle again",

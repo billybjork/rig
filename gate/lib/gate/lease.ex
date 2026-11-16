@@ -25,7 +25,11 @@ defmodule Gate.Lease do
     end
   end
 
-  @doc "Asks for a Sprite for `project`'s part `part`; returns the lease's pid."
+  @doc """
+  Asks for a Sprite for `project`'s part `part`; returns the lease's pid.
+  A ship worker's gate (`SHIPYARD_STATUS_ID` set) asks as `ship`, ahead of
+  every session's own gate.
+  """
   def request(project, part, key) do
     owner = self()
     spawn_link(fn -> hold(owner, project, part, key) end)
@@ -48,7 +52,7 @@ defmodule Gate.Lease do
 
   defp hold(owner, project, part, key) do
     with {:ok, sock} <- connect(),
-         :ok <- send_line(sock, %{lease: %{project: project, part: part}}),
+         :ok <- send_line(sock, %{lease: %{project: project, part: part, priority: priority()}}),
          {:ok, line} <- :gen_tcp.recv(sock, 0),
          %{"granted" => sprite} <- JSON.decode!(line) do
       send(owner, {:fleet_granted, key, sprite, self()})
@@ -63,6 +67,10 @@ defmodule Gate.Lease do
       other -> send(owner, {:fleet_lost, key, inspect(other)})
     end
   end
+
+  @doc false
+  def priority,
+    do: if(System.get_env("SHIPYARD_STATUS_ID") in [nil, ""], do: "session", else: "ship")
 
   defp send_line(sock, msg), do: :gen_tcp.send(sock, JSON.encode!(msg) <> "\n")
 end
