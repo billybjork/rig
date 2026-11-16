@@ -7,7 +7,8 @@ defmodule Gate.Fake do
   runs there; a TTY exec runs in a session of its own that outlives its
   client, as a real one does. A Sprite with a `down` file answers nothing
   ("Error: connection closed"); one with `tty-silent` runs a TTY exec but
-  shows none of its output, and `tty-lossy` all but its launch line. Checkpoints go to `<sprite>/checkpoints`.
+  shows none of its output, and `tty-lossy` all but its launch line; one with
+  `slow-stage` takes that many seconds over each upload. Checkpoints go to `<sprite>/checkpoints`.
   """
 
   import ExUnit.Assertions
@@ -43,6 +44,10 @@ defmodule Gate.Fake do
     [ ! -e "$root/$s/tty-lossy" ] || exec tail -f "$out" | sed -u 's/gate-launched.*/garbled/' 
     exec tail -f "$out"
   fi
+  # A Sprite with `slow-stage` takes that many seconds over each upload.
+  case "$*" in
+    *gate-staged*) [ ! -e "$root/$s/slow-stage" ] || sleep "$(cat "$root/$s/slow-stage")" ;;
+  esac
   exec "$@"
   """
 

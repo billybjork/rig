@@ -174,14 +174,54 @@ defmodule Gate.Engine do
     ctx.report.(part, :working, message)
 
     with {:ok, tar} <- pack(ctx, part),
-         :ok <- Sprite.stage(sprite, id, tar, ctx.config.limits["stage"]),
+         :ok <- stage(ctx, part, tar),
          {:ok, life} <- Sprite.launch(sprite, id, nil, ctx.config.limits["launch"]) do
       if file = System.get_env("GATE_PARTS_FILE"),
         do: File.write!(file, "#{sprite} #{id}\n", [:append])
 
       put_in(state.parts[part.i], %{part | life: life, last_ok: now()})
     else
+      {:error, why, how} -> failed(ctx, state, part, why, how)
       {:error, why} -> failed(ctx, state, part, why)
+    end
+  end
+
+  # Uploads the part's tar, its size and lap in the part's log (and the
+  # gate's output once it is big enough to matter). An upload that outlasts
+  # its limit is the laptop's link, not the Sprite: a big one tries once more
+  # with twice the time, and one that still does not arrive reruns as
+  # `restarted`, which `Fleet` holds against no Sprite.
+  @big_upload 20_000_000
+  defp stage(ctx, part, tar) do
+    limit = ctx.config.limits["stage"]
+    size = File.stat!(tar).size
+    mb = Float.round(size / 1_000_000, 1)
+    t0 = now()
+
+    result =
+      case Sprite.stage(part.sprite, part.id, tar, limit) do
+        {:error, {:timeout, why}} when size >= @big_upload ->
+          note(part, "#{why}; uploading #{mb} MB again with #{limit * 2} s")
+
+          ctx.say.(
+            "#{part.job.name}: the #{mb} MB upload to #{part.sprite} outlasted #{limit} s; again with #{limit * 2} s"
+          )
+
+          Sprite.stage(part.sprite, part.id, tar, limit * 2)
+
+        other ->
+          other
+      end
+
+    secs = div(now() - t0, 1000)
+    note(part, "uploaded #{mb} MB in #{secs} s")
+
+    if size >= @big_upload,
+      do: ctx.say.("#{part.job.name}: uploaded #{mb} MB to #{part.sprite} in #{secs} s")
+
+    case result do
+      {:error, {:timeout, why}} -> {:error, why, "restarted"}
+      other -> other
     end
   end
 
@@ -258,22 +298,54 @@ defmodule Gate.Engine do
   defp q(value), do: "'" <> String.replace(to_string(value), "'", ~S('\'')) <> "'"
   defp qs(values), do: Enum.map_join(values, " ", &q/1)
 
-  # Only the commits since the last tip the Sprite fetched when this
-  # checkout has that commit (soco's whole history is about 300 MB), the
-  # whole history otherwise, and nothing when the Sprite has the commit.
+  # Nothing when the Sprite has the commit; else only the commits it lacks:
+  # those since the last tip it fetched when this checkout has that commit,
+  # and since the newest of HEAD's first parents it holds (`Sprite.holds/3`).
+  # The whole history (soco's is about 300 MB) goes only to a Sprite holding
+  # none of them. A Sprite that cannot be asked takes nothing: a full bundle
+  # sent to a Sprite that was merely slow to answer is what outlasted the
+  # upload's limit.
+  @candidates 64
   defp bundle(ctx, sprite, path) do
-    have = Sprite.tip(sprite, ctx.config.name)
     git = &System.cmd("git", &1, cd: ctx.config.top, stderr_to_stdout: true)
 
-    args =
-      cond do
-        have == nil -> ["HEAD"]
-        have == ctx.sha -> nil
-        match?({_, 0}, git.(["merge-base", "--is-ancestor", "HEAD", have])) -> nil
-        match?({_, 0}, git.(["cat-file", "-e", "#{have}^{commit}"])) -> ["HEAD", "--not", have]
-        true -> ["HEAD"]
+    candidates =
+      case git.(["rev-list", "--first-parent", "-n", to_string(@candidates), "HEAD"]) do
+        {out, 0} -> String.split(out)
+        _ -> []
       end
 
+    with {:ok, tip, have} <- holds(sprite, ctx.config.name, candidates) do
+      known_tip = tip != nil and match?({_, 0}, git.(["cat-file", "-e", "#{tip}^{commit}"]))
+
+      args =
+        cond do
+          have != nil and have == List.first(candidates) -> nil
+          known_tip and match?({_, 0}, git.(["merge-base", "--is-ancestor", "HEAD", tip])) -> nil
+          known_tip -> ["HEAD", "--not", tip] ++ List.wrap(have)
+          have -> ["HEAD", "--not", have]
+          true -> ["HEAD"]
+        end
+
+      write_bundle(git, path, args)
+    end
+  end
+
+  defp holds(sprite, name, candidates, tries \\ 2) do
+    case Sprite.holds(sprite, name, candidates) do
+      {:error, _} when tries > 1 ->
+        Process.sleep(2000)
+        holds(sprite, name, candidates, tries - 1)
+
+      {:error, why} ->
+        {:error, "could not ask #{sprite} what it holds (#{why})", "restarted"}
+
+      ok ->
+        ok
+    end
+  end
+
+  defp write_bundle(git, path, args) do
     if args do
       case git.(["bundle", "create", "-q", path | args]) do
         {_, 0} -> :ok

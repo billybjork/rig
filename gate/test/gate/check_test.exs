@@ -47,6 +47,42 @@ defmodule Gate.CheckTest do
     assert Gate.Sprite.last_line(log) == "sprite-gate: exit 0"
   end
 
+  test "a Sprite whose last tip this checkout lacks gets only the commits since the newest first parent it holds",
+       env do
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
+    assert status == 0, err
+    held = env.top |> Fake.git(["rev-parse", "HEAD"]) |> String.trim()
+
+    # A session's own gate left a commit on the Sprite this checkout never had.
+    repo = Path.join(env.root, "gate-1/home/proj")
+
+    Fake.git(repo, [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "elsewhere"
+    ])
+
+    Fake.git(repo, ["update-ref", "refs/laptop/gate", "HEAD"])
+
+    File.write!(Path.join(env.top, "new.txt"), "new\n")
+    Fake.git(env.top, ["add", "."])
+    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "new"])
+
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
+    assert status == 0, err
+    [bundle] = Path.wildcard(Path.join(env.root, "gate-1/home/parts/*/in.bundle"))
+    header = bundle |> File.read!() |> String.split("\n\n", parts: 2) |> hd()
+    assert header =~ "\n-#{held}", "the bundle should stop at the commit the Sprite holds"
+    newest = env.logs |> Path.join("gate-1-*-static.log") |> Path.wildcard() |> Enum.max()
+    assert File.read!(newest) =~ ~r/gate: uploaded [\d.]+ MB in \d+ s/
+  end
+
   test "a red part fails the gate, never reruns, and prints a digest of its failing tests", env do
     {status, out, _err} =
       check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh red"}])
@@ -565,6 +601,27 @@ defmodule Gate.CheckTest do
       assert status == 0, err
       assert [_, {first, "restarted"}, {second, "green"}] = Gate.FakeFleet.released(fleet)
       assert first != second
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    @tag gate: %{
+           "pool" => "fleet",
+           "limits" => %{
+             "poll" => 0.1,
+             "run" => 20,
+             "unreachable" => 2,
+             "launch" => 10,
+             "stage" => 1
+           }
+         }
+    test "an upload that outlasts its limit is the laptop's link: given back as restarted, not failed",
+         env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
+      File.write!(Path.join(env.root, "gate-1/slow-stage"), "3")
+      {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
+      assert status == 0, err
+      assert err =~ "the upload outlasted 1 s"
+      assert [{"gate-1", "restarted"}, {"gate-2", "green"}] = Gate.FakeFleet.released(fleet)
       Gate.FakeFleet.stop(fleet)
     end
 

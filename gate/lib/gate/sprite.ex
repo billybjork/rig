@@ -51,25 +51,60 @@ defmodule Gate.Sprite do
 
   def create(sprite), do: call(["create", "--skip-console", sprite], 300)
 
-  @doc "The last commit `sprite` fetched into the project's tree, or nil."
-  def tip(sprite, name) do
-    script = ~S|git -C ~/"$1" rev-parse -q --verify refs/laptop/gate|
+  @doc """
+  What the project's tree on `sprite` holds: `{:ok, tip, have}`, `tip` the
+  last commit a bundle brought there (`refs/laptop/gate`) and `have` the
+  first of `candidates` it has, each nil when none; `{:error, why}` when
+  the Sprite could not be asked.
 
-    case call(["-s", sprite, "exec", "--", "bash", "-c", script, "tip", name], 60) do
+  `candidates` (HEAD's first parents, newest first) are what a bundle can
+  stop at when this checkout lacks `tip`: a session's own `gate check`
+  leaves a tip the ship worker's clone never fetched, and sending the whole
+  history then (soco's is about 300 MB) outlasted the upload's limit on a
+  busy uplink, so every rerun sent it again (2026-11-16).
+  """
+  def holds(sprite, name, candidates) do
+    script = ~S"""
+    cd ~/"$1" 2>/dev/null || { echo tip; echo have; exit 0; }
+    shift
+    echo "tip $(git rev-parse -q --verify refs/laptop/gate)"
+    for c in "$@"; do
+      git cat-file -e "$c^{commit}" 2>/dev/null && { echo "have $c"; exit 0; }
+    done
+    echo have
+    """
+
+    case call(["-s", sprite, "exec", "--", "bash", "-c", script, "holds", name | candidates], 60) do
       {out, 0} ->
-        out = String.trim(out)
-        if out =~ ~r/\A[0-9a-f]{40}\z/, do: out
+        found =
+          for line <- String.split(out, ["\n", "\r"], trim: true),
+              [key, sha] <- [String.split(String.trim(line), " ", parts: 2)],
+              key in ~w(tip have),
+              sha =~ ~r/\A[0-9a-f]{40}\z/,
+              into: %{},
+              do: {key, sha}
 
-      _ ->
-        nil
+        if out =~ ~r/^have/m,
+          do: {:ok, found["tip"], found["have"]},
+          else: {:error, "an unreadable answer: #{last_line(out)}"}
+
+      {out, status} ->
+        {:error, "exit #{status}: #{last_line(out)}"}
     end
   end
 
-  @doc "Uploads the part's tar to `~/parts/<id>`, ending what an earlier part left."
+  @doc """
+  Uploads the part's tar to `~/parts/<id>`, ending what an earlier part
+  left. An upload that outlasts `secs` is `{:error, {:timeout, why}}`: the
+  laptop's link was too slow, which says nothing of the Sprite.
+  """
   def stage(sprite, id, tar, secs) do
     case script(sprite, "stage", [id], secs, in: tar) do
       {out, 0} ->
         if out =~ "gate-staged", do: :ok, else: {:error, last_line(out)}
+
+      {out, 142} ->
+        {:error, {:timeout, "the upload outlasted #{secs} s: #{last_line(out)}"}}
 
       {out, status} ->
         {:error, "the upload failed (exit #{status}): #{last_line(out)}"}

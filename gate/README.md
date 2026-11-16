@@ -47,7 +47,12 @@ So a part, on its Sprite:
 1. **Stage** (a non-TTY exec, the tar on stdin; `sprite/stage.sh`): ends
    whatever an earlier part left, and unpacks the job, its vars and argv,
    and the git bundle that brings the Sprite to the commit (only the
-   commits it lacks).
+   commits it lacks: since its last tip when this checkout has it, else
+   since the newest of HEAD's first parents it holds; the whole history,
+   about 300 MB for soco, only to a Sprite holding none). The part's log
+   says `gate: uploaded <MB> in <s>`. An upload that outlasts `stage` is
+   the laptop's link, not the Sprite: a big one tries once more with twice
+   the time, then reruns as `restarted`, no strike.
 2. **Launch** (a TTY exec under `script`, since the ship worker's gate has
    no terminal; `sprite/launch.sh`): starts `sprite/job.sh` in a session of
    its own, writing `~/parts/<id>/log`, then prints a keepalive until the
