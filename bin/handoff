@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Session-to-session handoff in Rex: the running agent opens its successor in
 # a pane beside its own, with a prompt file as the successor's first message;
-# the successor closes the predecessor's pane once it has gone idle. The
+# the successor closes the predecessor's pane once Billy has been back to it
+# (his next message to the successor), never while what the predecessor last
+# wrote may be unread. The
 # `handoff` skill (~/dev/rig/agents/skills/handoff) owns when and how; this
 # script is its mechanics. Any project in ~/dev.
 #
@@ -13,10 +15,18 @@
 #       this pane is appended to PROMPT. Past three automatic handoffs it
 #       refuses unless --asked (Billy asked for this one). Prints the new pane
 #       once the successor is working.
-#   handoff close BLOCK
-#       Waits (up to ten minutes) until the agent in BLOCK is idle, closes the
-#       pane, and moves this checkout's worktree lock, when it has one, to
-#       this session.
+#   handoff close BLOCK [SUCCESSOR]
+#       Closes the predecessor's pane BLOCK once its agent is idle and Billy
+#       has been back since: the successor's pane (SUCCESSOR, default
+#       REX_BLOCK) ended a turn and then began another, which takes a message
+#       or an answer from Billy, typed beside BLOCK. Rex cannot say whether
+#       Billy has read a pane, so this is the proxy, and it waits as long as
+#       that takes. If BLOCK's agent works again (Billy is using it), it
+#       starts over; if the successor's pane goes first, it leaves BLOCK open
+#       for Billy. Before closing it saves BLOCK's screen and scrollback under
+#       this checkout's .local/handoffs/. Once BLOCK is idle it moves this
+#       checkout's worktree lock, when it has one, to this session. Run it in
+#       a background terminal (bg run); it closes that terminal when it ends.
 set -euo pipefail
 
 fail() { echo "handoff: $*" >&2; exit 1; }
@@ -39,7 +49,8 @@ agent() {
 # (2m 51s · ↓ 15.6k tokens)") and Codex an "esc to interrupt" status.
 working() { grep -qiE '^[^[:space:][:alnum:]]+ [[:alpha:]]+… \(|esc to interrupt'; }
 
-busy() { # BLOCK -> 0 while its agent is mid-turn
+busy() { # BLOCK -> 0 while its agent is mid-turn, by the status it reports or its screen
+  rex block call -b "$1" program_status 2>/dev/null | grep -q '"state":"working"' && return 0
   rex capture -b "$1" --trim 2>/dev/null | tail -n 15 | working
 }
 
@@ -88,7 +99,11 @@ open() {
   cat >>"$prompt" <<EOF
 
 ---
-Handoff $gen. The session before you runs in Rex pane $REX_BLOCK. Once you have read this prompt, run \`$self close $REX_BLOCK\` in the background: it waits for that session to go idle, then closes its pane.
+Handoff $gen. The session before you runs in Rex pane $REX_BLOCK. Once you have read this prompt, run this as written (your shell fills in your own pane):
+
+    $(dirname "$self")/bg run --label handoff-close -- $self close $REX_BLOCK "\$REX_BLOCK"
+
+It closes that pane only after Billy has been back to it (his next message to you), since its last words may be a recap he has not read; until then leave the pane alone, and never close it another way.
 EOF
 
   # An interactive login zsh, so the successor resolves claude or codex on
@@ -120,29 +135,63 @@ EOF
 }
 
 close() {
-  local block=${1:-}
-  [ -n "$block" ] || fail "usage: handoff close BLOCK"
-  [ "$block" != "${REX_BLOCK:-}" ] || fail "$block is this session's own pane"
+  local block=${1:-} succ=${2:-${REX_BLOCK:-}}
+  [ -n "$block" ] && [ -n "$succ" ] || fail "usage: handoff close BLOCK [SUCCESSOR]"
+  [ "$block" != "$succ" ] || fail "$block is the successor's own pane"
 
-  local idle=0
-  for _ in $(seq 1 120); do
-    exists "$block" || { echo "handoff: pane $block is already closed"; break; }
-    if busy "$block"; then idle=0; else idle=$((idle + 1)); fi
-    if [ "$idle" -ge 2 ]; then
-      rex block close "$block" >/dev/null
-      echo "handoff: closed pane $block"
-      break
+  # pred_idle: polls BLOCK has been idle; succ_idle: polls the successor has
+  # been idle since then; ended: the successor ended a turn after BLOCK idled.
+  local pred_idle=0 succ_idle=0 ended="" locked="" outcome
+  while :; do
+    if ! exists "$block"; then outcome="pane $block is already closed"; break; fi
+    if ! exists "$succ"; then outcome="successor's pane $succ is gone; left $block open for Billy"; break; fi
+    if busy "$block"; then
+      pred_idle=0 succ_idle=0 ended=""
+    else
+      pred_idle=$((pred_idle + 1))
+    fi
+    if [ "$pred_idle" -ge 2 ]; then
+      [ -n "$locked" ] || { move_lock "$succ"; locked=1; }
+      if busy "$succ"; then
+        if [ -n "$ended" ]; then
+          save_screen "$block"
+          rex block close "$block" >/dev/null
+          outcome="closed pane $block once Billy was back (his message to $succ)"
+          break
+        fi
+        succ_idle=0
+      else
+        succ_idle=$((succ_idle + 1))
+        [ "$succ_idle" -lt 2 ] || ended=1
+      fi
     fi
     sleep 5
   done
-  ! exists "$block" || fail "pane $block stayed busy for ten minutes; left open"
+  echo "handoff: $outcome"
 
-  local top found
+  # Close this background terminal, the way bg run left it open.
+  if [ -n "${REX_BLOCK:-}" ] && [ "$REX_BLOCK" != "$succ" ] &&
+    rex block inspect "$REX_BLOCK" 2>/dev/null | grep -q '^placement: *detached'; then
+    rex block close "$REX_BLOCK" >/dev/null
+  fi
+}
+
+save_screen() { # BLOCK -> its screen and scrollback under .local/handoffs/
+  local top dir
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$PWD
+  dir=$top/.local/handoffs
+  mkdir -p "$dir"
+  rex capture -b "$1" --trim >"$dir/closed-${1##*-}.txt" 2>/dev/null || true
+}
+
+move_lock() { # SUCCESSOR -> this checkout's worktree lock, when it has one, to its agent
+  local top pid
   top=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
   if git worktree list --porcelain | awk -v t="$top" '$1 == "worktree" { w = $2 } $1 == "locked" && w == t { f = 1 } END { exit !f }'; then
-    found=$(agent) || true
+    pid=$(rex block call -b "$1" program_status 2>/dev/null | sed -n 's/.*"owner":{"pid":\([0-9]*\).*/\1/p' | head -1)
+    [ -n "$pid" ] || { pid=$(agent) || true; pid=${pid%% *}; }
     git worktree unlock "$top"
-    git worktree lock --reason "handoff session (pid ${found%% *})" "$top"
+    git worktree lock --reason "handoff session (pid $pid)" "$top"
     echo "handoff: worktree lock moved to this session"
   fi
 }
@@ -153,7 +202,7 @@ main() {
   case "${1:-}" in
     open) shift; open "$@" ;;
     close) shift; close "$@" ;;
-    *) fail "usage: handoff open PROMPT [DIR] [--asked] | close BLOCK" ;;
+    *) fail "usage: handoff open PROMPT [DIR] [--asked] | close BLOCK [SUCCESSOR]" ;;
   esac
 }
 

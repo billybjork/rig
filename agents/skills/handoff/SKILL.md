@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Hand the current work to a fresh session in a Rex pane beside this one, so it continues with a clean context. The agent writes the durable state where the project keeps it, cleans up what would orphan (background runs, servers, watches, a finished worktree), writes a short prompt, and `~/dev/rig/bin/handoff open` starts the successor; the successor closes this pane once it is idle. Use when Billy asks to hand off, or on your own at a clean point once the context is heavy (rules inside). Any project in ~/dev; Claude and Codex alike.
+description: Hand the current work to a fresh session in a Rex pane beside this one, so it continues with a clean context. The agent writes the durable state where the project keeps it, cleans up what would orphan (background runs, servers, watches, a finished worktree), writes a short prompt, and `~/dev/rig/bin/handoff open` starts the successor; the successor closes this pane only once Billy has been back to it, so a last recap is never closed unread. Use when Billy asks to hand off, or on your own at a clean point once the context is heavy (rules inside). Any project in ~/dev; Claude and Codex alike.
 ---
 
 # Hand off to a fresh session
@@ -8,7 +8,7 @@ description: Hand the current work to a fresh session in a Rex pane beside this 
 A long session gets slower and costlier per turn, and it drops detail when it
 is summarized. A handoff ends it on purpose at a clean point: the next session
 starts from the project's durable record and a short prompt, in a Rex pane
-beside this one, and closes this one's pane when it takes over.
+beside this one, and closes this one's pane once Billy has been back to it.
 `~/dev/rig/bin/handoff` is the mechanics; this skill is the judgment and the
 order.
 
@@ -103,14 +103,23 @@ successor is working. On a trust prompt or no start within 90 s it fails and
 says so: tell Billy, and do not open a second one before checking the pane
 (`rex capture -b <pane> --trim`).
 
-Then end your turn with one line: the successor's pane, the prompt's path,
-and what it is doing. Do nothing after it; the successor closes this pane.
+Then end your turn with the recap Billy would want if he read only this
+pane: where the work stands, anything he has not yet seen (results, a
+ship's outcome, a question for him), and a last line naming the successor's
+pane, the prompt's path, and what it is doing. Do nothing after it. The pane
+stays open until Billy has been back (his next message to the successor, typed
+beside it), so the recap is read before it closes (Billy, 2026-11-16).
 
 ## When you are the successor
 
-1. Read the prompt, then run the close command its footer names in the
-   background. It waits until the predecessor is idle, closes its pane, and
-   moves the worktree's lock to you when you inherited one.
+1. Read the prompt, then run the close command its footer names, as
+   written: it starts a background terminal that moves the worktree's lock
+   to you when you inherited one, and closes the predecessor's pane only
+   after it is idle and Billy has sent you a message, since its last words
+   may be a recap he has not read (Billy, 2026-11-16). Never close the
+   predecessor's pane yourself or sooner. The closer ends by itself, so it
+   is exempt from settling background work when you hand off in turn; your
+   pane closing first leaves the predecessor's open for Billy.
 2. Resume through the skill the prompt names, after the project's bootstrap
    if you are in a new worktree.
 3. If the prompt was wrong or left out something that cost you time, say so
