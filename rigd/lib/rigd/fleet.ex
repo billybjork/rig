@@ -24,6 +24,12 @@ defmodule Rigd.Fleet do
   would still pass (each part installs what it lacks), but a restore would
   bring back the old tools. At 04:00 every idle Sprite restores its golden
   checkpoint, dropping what the day left.
+
+  `drain/0` (`bin/rigd install` before it restarts rigd) stops leasing and
+  making Sprites golden for a minute, renewed by each call: the leases
+  held run out, the waiters stay queued, and a gate whose connection
+  closes before its grant connects again (`Gate.Lease`), so a restart
+  costs no gate anything. A drain whose caller went lapses by itself.
   """
 
   use GenServer
@@ -33,6 +39,7 @@ defmodule Rigd.Fleet do
 
   @stamps_every 10 * 60 * 1000
   @turns 3
+  @drain_ms 60_000
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -53,6 +60,12 @@ defmodule Rigd.Fleet do
 
   @doc "Gives the turn back."
   def turn_done(fleet, pid), do: GenServer.cast(fleet, {:turn_done, pid})
+
+  @doc """
+  Stops leasing for a minute from now (`opts[:drain_ms]`); returns the
+  Sprites still leased and the queue's length.
+  """
+  def drain, do: GenServer.call(__MODULE__, :drain)
 
   @doc "Each Sprite's state, the current stamps, and the queue's length."
   def status, do: GenServer.call(__MODULE__, :status)
@@ -122,7 +135,9 @@ defmodule Rigd.Fleet do
        turning: [],
        turns: [],
        stamps: %{},
-       reading: nil
+       reading: nil,
+       # Monotonic ms until which nothing is leased (`drain/0`), or nil.
+       draining: nil
      }}
   end
 
@@ -154,6 +169,16 @@ defmodule Rigd.Fleet do
   end
 
   @impl true
+  def handle_call(:drain, _from, st) do
+    ms = Keyword.get(st.opts, :drain_ms, @drain_ms)
+    if st.draining == nil, do: Logger.info("fleet: draining for a restart")
+    Process.send_after(self(), :drain_over, ms + 1)
+    leased = for {name, %{status: :leased}} <- Enum.sort(st.sprites), do: name
+
+    {:reply, %{leased: leased, waiting: length(st.queue)},
+     %{st | draining: System.monotonic_time(:millisecond) + ms}}
+  end
+
   def handle_call(:status, _from, st) do
     {:reply, %{sprites: st.sprites, stamps: st.stamps, waiting: length(st.queue)}, st}
   end
@@ -203,6 +228,15 @@ defmodule Rigd.Fleet do
     {:noreply, roll(%{st | stamps: stamps || st.stamps, reading: nil})}
   end
 
+  def handle_info(:drain_over, st) do
+    if st.draining && System.monotonic_time(:millisecond) >= st.draining do
+      Logger.info("fleet: drain lapsed; leasing again")
+      {:noreply, %{st | draining: nil} |> grant() |> roll()}
+    else
+      {:noreply, st}
+    end
+  end
+
   def handle_info(:nightly, st) do
     Process.send_after(self(), :nightly, until_nightly(NaiveDateTime.local_now()) + 1000)
     for {name, %{status: :idle}} <- st.sprites, do: Sprite.restore(name)
@@ -221,6 +255,7 @@ defmodule Rigd.Fleet do
 
   # Leases idle Sprites to the waiters in the queue's order.
   defp grant(%{queue: []} = st), do: st
+  defp grant(%{draining: until} = st) when until != nil, do: st
 
   defp grant(st) do
     {queue, sprites} =
@@ -247,7 +282,7 @@ defmodule Rigd.Fleet do
 
   defp next_turn(st), do: st
 
-  defp roll(%{queue: []} = st) do
+  defp roll(%{queue: [], draining: nil} = st) do
     if name = stale(st.sprites, st.stamps) do
       Logger.info("fleet: #{name} is golden under old stamps; making it golden again")
       Sprite.regolden(name)

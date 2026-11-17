@@ -9,6 +9,8 @@ defmodule Rigd.Fleet.Socket do
       ← {"released": "rig-gate-3"}
       → {"status": {}}
       ← {"sprites": {...}, "stamps": {...}, "waiting": 0}
+      → {"drain": {}}
+      ← {"draining": {"leased": ["rig-gate-3"], "waiting": 2}}
 
   Each connection is a process, and it holds what it leased: a gate that
   dies closes its connection, and the Sprite it held ends its parts before
@@ -17,6 +19,10 @@ defmodule Rigd.Fleet.Socket do
   it otherwise) or `crashed` (a native crash). `priority` `ship` (a ship
   worker's gate) waits ahead of every other lease; anything else is a
   session's.
+
+  `drain` stops granting for a minute, renewed by each `drain`
+  (`Rigd.Fleet.drain/0`); `bin/rigd install` sends it every few seconds
+  until nothing is leased, then restarts rigd.
   """
 
   use GenServer
@@ -103,6 +109,11 @@ defmodule Rigd.Fleet.Socket do
       end)
 
     reply(sock, %{sprites: sprites, stamps: st.stamps, waiting: st.waiting})
+    leased
+  end
+
+  defp handle(sock, %{"drain" => _}, leased) do
+    reply(sock, %{draining: Rigd.Fleet.drain()})
     leased
   end
 

@@ -17,6 +17,14 @@ defmodule Gate.CheckTest do
     Fake.capture(fn -> Gate.Check.main(Fake.config(top), []) end)
   end
 
+  defp until(fun, tries \\ 200) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> raise "timed out"
+      true -> Process.sleep(25) && until(fun, tries - 1)
+    end
+  end
+
   defp log(%{logs: logs}, sprite, part) do
     [file] = Path.wildcard(Path.join(logs, "#{sprite}-*-#{part}.log"))
     File.read!(file)
@@ -577,6 +585,42 @@ defmodule Gate.CheckTest do
       [row] = Fake.rows(env.logs)
       assert row =~ ~r/\ttest-2:\d+:gate-[12]:green/
       Gate.FakeFleet.stop(fleet)
+    end
+
+    test "a part waiting for a lease when rigd restarts asks the new Fleet, and keeps its gate",
+         env do
+      fleet = Gate.FakeFleet.start([])
+      path = Gate.FakeFleet.path(fleet)
+      me = self()
+
+      spawn_link(fn ->
+        until(fn -> Gate.FakeFleet.waiting(fleet) == 1 end)
+        Gate.FakeFleet.stop(fleet)
+        Process.sleep(300)
+        send(me, {:fleet, Gate.FakeFleet.start(~w(gate-1), path)})
+      end)
+
+      {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
+      assert status == 0, err
+      assert_received {:fleet, again}
+      assert Gate.FakeFleet.released(again) == [{"gate-1", "green"}]
+      Gate.FakeFleet.stop(again)
+    end
+
+    test "a part whose Fleet does not come back within the reconnect time has no verdict",
+         env do
+      System.put_env("GATE_FLEET_RECONNECT", "1")
+      on_exit(fn -> System.delete_env("GATE_FLEET_RECONNECT") end)
+      fleet = Gate.FakeFleet.start([])
+
+      spawn_link(fn ->
+        until(fn -> Gate.FakeFleet.waiting(fleet) == 1 end)
+        Gate.FakeFleet.stop(fleet)
+      end)
+
+      assert_raise Gate.Error, ~r/rigd's Fleet went mid-gate/, fn ->
+        check(env, [{"static", "bash cmd.sh green"}])
+      end
     end
 
     test "a crashed part is given back as crashed and reruns on the next Sprite leased", env do

@@ -208,12 +208,19 @@ defmodule Gate.FakeFleet do
 
   def start(sprites) do
     path = Path.join(System.tmp_dir!(), "gate-fleet-#{System.unique_integer([:positive])}.sock")
-    {:ok, pid} = GenServer.start(__MODULE__, {path, sprites})
     System.put_env("GATE_FLEET_SOCKET", path)
+    start(sprites, path)
+  end
+
+  @doc "Starts one on `path`, as rigd does again on its socket after a restart."
+  def start(sprites, path) do
+    {:ok, pid} = GenServer.start(__MODULE__, {path, sprites})
     pid
   end
 
   def released(pid), do: GenServer.call(pid, :released)
+  def waiting(pid), do: GenServer.call(pid, :waiting)
+  def path(pid), do: GenServer.call(pid, :path)
   def stop(pid), do: GenServer.stop(pid)
 
   @impl true
@@ -243,6 +250,8 @@ defmodule Gate.FakeFleet do
 
   @impl true
   def handle_call(:released, _from, st), do: {:reply, Enum.reverse(st.released), st}
+  def handle_call(:waiting, _from, st), do: {:reply, length(st.waiting), st}
+  def handle_call(:path, _from, st), do: {:reply, st.path, st}
 
   @impl true
   def handle_info({:conn, sock}, st) do

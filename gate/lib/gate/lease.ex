@@ -7,7 +7,11 @@ defmodule Gate.Lease do
   `Fleet` ends that part's processes on the Sprite before leasing it
   again. The process tells its owner `{:fleet_granted, key, sprite, pid}`
   once a Sprite is leased, or `{:fleet_lost, key, why}` when the
-  connection went first.
+  connection went first and `Fleet` did not come back within
+  `reconnect/0` (5 minutes): `bin/rigd install` drains Fleet and restarts
+  rigd, and a waiter that connects again keeps its gate. A lease lost
+  after its grant is not asked for again: its part ran on a Sprite that
+  `Fleet` takes back.
   """
 
   def socket,
@@ -50,7 +54,15 @@ defmodule Gate.Lease do
   defp connect,
     do: :gen_tcp.connect({:local, socket()}, 0, [:binary, packet: :line, active: false], 5000)
 
-  defp hold(owner, project, part, key) do
+  @doc "Milliseconds a waiter tries to reach `Fleet` again ($GATE_FLEET_RECONNECT seconds, else 300)."
+  def reconnect do
+    case Integer.parse(System.get_env("GATE_FLEET_RECONNECT") || "") do
+      {s, ""} -> s * 1000
+      _ -> 300_000
+    end
+  end
+
+  defp hold(owner, project, part, key, lost \\ nil) do
     with {:ok, sock} <- connect(),
          :ok <- send_line(sock, %{lease: %{project: project, part: part, priority: priority()}}),
          {:ok, line} <- :gen_tcp.recv(sock, 0),
@@ -64,7 +76,19 @@ defmodule Gate.Lease do
           :gen_tcp.close(sock)
       end
     else
-      other -> send(owner, {:fleet_lost, key, inspect(other)})
+      {:error, _} = why ->
+        now = System.monotonic_time(:millisecond)
+        lost = lost || now
+
+        if now - lost < reconnect() do
+          Process.sleep(1000)
+          hold(owner, project, part, key, lost)
+        else
+          send(owner, {:fleet_lost, key, inspect(why)})
+        end
+
+      other ->
+        send(owner, {:fleet_lost, key, inspect(other)})
     end
   end
 

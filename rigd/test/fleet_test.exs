@@ -218,6 +218,32 @@ defmodule Rigd.FleetTest do
     assert recv(session, 300) == :timeout
   end
 
+  test "a drain leases nothing until it lapses, and says what is still leased",
+       %{root: root, opts: opts} do
+    for s <- opts[:sprites], do: golden_sprite(root, s, @stamp)
+    start(Keyword.put(opts, :drain_ms, 500))
+    until(fn -> Enum.all?(opts[:sprites], &(status(&1) == :idle)) end)
+
+    held = lease(opts)
+    assert %{"granted" => sprite} = recv(held)
+
+    ctl = connect(opts)
+    send_line(ctl, %{drain: %{}})
+    assert recv(ctl) == %{"draining" => %{"leased" => [sprite], "waiting" => 0}}
+
+    waiter = lease(opts)
+    assert recv(waiter, 300) == :timeout
+    send_line(held, %{release: %{sprite: sprite, result: "green"}})
+    assert %{"released" => _} = recv(held)
+    # Renewed: still nothing leased, though both Sprites are idle.
+    send_line(ctl, %{drain: %{}})
+    assert recv(ctl) == %{"draining" => %{"leased" => [], "waiting" => 1}}
+    assert recv(waiter, 300) == :timeout
+
+    # Nobody renews it: it lapses and the waiter is served.
+    assert %{"granted" => _} = recv(waiter, 2000)
+  end
+
   test "enqueue: ships in arrival order, then sessions in theirs" do
     s1 = %{id: :s1, priority: :session}
     s2 = %{id: :s2, priority: :session}

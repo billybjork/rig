@@ -82,6 +82,13 @@ git bundle stays small and the build caches warm; `Fleet` grants one of
 them when it is idle, else one that served the project since its last
 restore, else any idle Sprite.
 
+A rigd restart costs no gate anything (2026-11-16): `bin/rigd install`
+and `restart` first send `{"drain": {}}` every few seconds, which stops
+`Fleet` leasing (and making Sprites golden) for a minute past the last
+one, and restart once no Sprite is leased (20 minutes at most). A gate
+whose connection closes before its grant connects again and asks anew for
+5 minutes (`GATE_FLEET_RECONNECT`) before it gives up without a verdict.
+
 `result`: `green` or `red` returns the Sprite idle. `restarted` (its
 Sprite restarted or went unreachable) and `failed` (the Sprite failed the
 part otherwise) end what the part left running and return it idle with
