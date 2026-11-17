@@ -150,9 +150,12 @@ defmodule Rigd.HeavyTest do
     refute Heavy.boundary?(p(1, 0, 0.0, "/Users/b/.venv/bin/python claude.py"))
   end
 
-  test "demote: nothing while the laptop has room; back to normal once it is calm" do
+  test "demote: nothing under one and a half times the cores; back to normal once it is calm" do
     st = %{holders: [], hot: MapSet.new([20, 31]), demoted: %{}, cores: 12}
     assert Heavy.demote(st, procs(), 6.0).demoted == %{}
+    # Hot jobs at a load above the cores but under one and a half times them:
+    # agents' builds and tests, nothing starving (2026-11-16).
+    assert Heavy.demote(st, procs(), 14.0).demoted == %{}
 
     demoted = %{31 => %{cmd: "x", cpu: 210.0, pids: [999_999]}}
     assert Heavy.demote(%{st | demoted: demoted}, procs(), 10.0).demoted == demoted

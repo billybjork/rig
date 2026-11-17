@@ -22,7 +22,7 @@ defmodule Rigd.Heavy do
   A slot is held as long as its connection: the job ending ends it.
 
   **Demotion.** Every #{20} s, while the laptop is overloaded (the 5-minute
-  load at or above its cores), a job agents or a terminal started (a process
+  load at or above one and a half times its cores), a job agents or a terminal started (a process
   tree under Claude, Codex or Rex) that has kept 150% CPU or more for two
   samples running, without a slot, is put in the background
   (`taskpolicy -b`): macOS then runs it on what is left over, so it cannot
@@ -30,7 +30,13 @@ defmodule Rigd.Heavy do
   slot's job, the machine's gate (`~/.cache/dev-gate/lock`), the ship
   workers and rigd are never demoted. Once the load is back under three
   quarters of the cores, demoted jobs return to normal (`taskpolicy -B`).
-  rigd's log says what it demoted and why.
+  rigd's log says what it demoted and why: its busiest process and whose
+  it is.
+
+  The line was the cores at first; on 2026-11-16 that demoted 18 agents'
+  builds and tests (`beam.smp`, 150–310% CPU) at loads of 12–20 on 12
+  cores, where nothing waited, while the standstill it is for ran at
+  80–130.
   """
 
   use GenServer
@@ -144,7 +150,7 @@ defmodule Rigd.Heavy do
 
   @doc false
   def demote(st, procs, load5) do
-    busy = load5 >= st.cores
+    busy = load5 >= st.cores * 1.5
     calm = load5 < st.cores * 0.75
 
     cond do
