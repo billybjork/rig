@@ -95,7 +95,7 @@ for title, rows in (("holding", d["holders"]), ("waiting", d["waiting"])):
         mins = int((now - r["since"]) / 60)
         print(f"{title}: {r['kind']:3} {r['label']} ({r.get('cwd') or '?'}, {mins} min)")
 for r in d["demoted"]:
-    print(f"demoted: {r['cmd']} (pid {r['root']}, {round(r['cpu'])}% CPU)")
+    print(f"demoted: {r.get('top') or r['cmd']} ({r.get('who', '?')}; job pid {r['root']}, {round(r['cpu'])}% CPU)")
 PY
       ;;
     log) tail -n 40 -f "$HOME/Library/Logs/rigd.log" ;;

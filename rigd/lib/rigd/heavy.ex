@@ -168,11 +168,17 @@ defmodule Rigd.Heavy do
 
             unless Map.has_key?(demoted, root) do
               Logger.warning(
-                "heavy: put #{g.cmd} (pid #{root}, #{round(g.cpu)}% CPU) in the background at load #{load5}: it holds no slot (bin/heavy)"
+                "heavy: put #{g.top} (#{who(g.agent, procs)}; job pid #{root}, #{round(g.cpu)}% CPU) in the background at load #{load5}: it holds no slot (bin/heavy)"
               )
             end
 
-            Map.put(demoted, root, %{cmd: g.cmd, cpu: g.cpu, pids: Enum.uniq(known ++ g.pids)})
+            Map.put(demoted, root, %{
+              cmd: g.cmd,
+              top: g.top,
+              who: who(g.agent, procs),
+              cpu: g.cpu,
+              pids: Enum.uniq(known ++ g.pids)
+            })
           end)
 
         %{st | hot: hot, demoted: demoted}
@@ -207,7 +213,9 @@ defmodule Rigd.Heavy do
   the tree under the process right below an agent or Rex, with its CPU
   summed. Returns `{hot, demote}`: the roots at `threshold` or more now,
   and those that were hot in `hot_before` too, each `root => %{pids, cpu,
-  cmd}`.
+  cmd, top, agent}`: `top` the busiest process's command (an agent's Bash
+  job's root is only its shell wrapper), `agent` the pid the job runs
+  under.
   """
   def demotions(procs, exempt, hot_before, threshold) do
     by_pid = Map.new(procs, &{&1.pid, &1})
@@ -224,8 +232,17 @@ defmodule Rigd.Heavy do
       for {root, members} <- Enum.group_by(jobs, &elem(&1, 0), &elem(&1, 1)),
           cpu = members |> Enum.map(& &1.cpu) |> Enum.sum(),
           cpu >= threshold,
+          top = Enum.max_by(members, & &1.cpu),
           into: %{},
-          do: {root, %{pids: Enum.map(members, & &1.pid), cpu: cpu, cmd: short(by_pid[root].cmd)}}
+          do:
+            {root,
+             %{
+               pids: Enum.map(members, & &1.pid),
+               cpu: cpu,
+               cmd: short(by_pid[root].cmd),
+               top: short(top.cmd),
+               agent: by_pid[root].ppid
+             }}
 
     {MapSet.new(Map.keys(hot)), Map.filter(hot, fn {root, _} -> root in hot_before end)}
   end
@@ -260,6 +277,24 @@ defmodule Rigd.Heavy do
   defp walk(seen, [pid | rest], children) do
     new = Enum.reject(Map.get(children, pid, []), &(&1 in seen))
     walk(Enum.into(new, seen), new ++ rest, children)
+  end
+
+  @doc """
+  Who a job at `agent` (a pid in `procs`) belongs to: the Claude session's
+  name (`~/.claude/sessions/<pid>.json`, or `sessions`), `Rex` for a
+  background terminal, else the agent's command.
+  """
+  def who(agent, procs, sessions \\ Path.expand("~/.claude/sessions")) do
+    with {:ok, text} <- File.read(Path.join(sessions, "#{agent}.json")),
+         {:ok, %{"name" => name}} when is_binary(name) <- JSON.decode(text) do
+      "session #{name}"
+    else
+      _ ->
+        case Enum.find(procs, &(&1.pid == agent)) do
+          %{cmd: cmd} -> if cmd =~ ~r{Rex}, do: "Rex", else: "under #{short(cmd)}"
+          nil -> "under pid #{agent}"
+        end
+    end
   end
 
   defp short(cmd), do: cmd |> String.replace(~r{\S*/}, "", global: false) |> String.slice(0, 120)

@@ -125,6 +125,16 @@ defmodule Rigd.HeavyTest do
 
     assert Enum.sort(pids) == [20, 21, 22]
     refute Map.has_key?(demote, 40)
+    # An agent's Bash job is named by its busiest process, not its shell.
+    assert %{top: "python tune.py", agent: 10} = demote[20]
+  end
+
+  @tag :tmp_dir
+  test "who: the Claude session's name, Rex, else the agent's command", %{tmp_dir: tmp} do
+    File.write!(Path.join(tmp, "10.json"), ~s({"pid": 10, "name": "heaters-be"}))
+    assert Heavy.who(10, procs(), tmp) == "session heaters-be"
+    assert Heavy.who(764, procs(), tmp) == "Rex"
+    assert Heavy.who(5, procs(), tmp) == "under pid 5"
   end
 
   test "demotions: a slot's job and its children are spared" do
