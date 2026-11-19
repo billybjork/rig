@@ -33,13 +33,11 @@ Billy works in Rex and wants his tabs uncluttered (Billy, 2026-10-28).
   agents keep their share. A big run belongs on Modal or a Sprite. A job
   without a slot that keeps 150% CPU while the laptop is overloaded is put
   in the background by rigd; `rigd heavy` shows the slots and what it did.
-- **Visual questions go in a pane** (`~/dev/rig/bin/look`). When Billy's
-  call depends on seeing images or clips (which mask, which cut, which of
-  these are wrong), `look ask "<question>" <files>` shows them beside you
-  and prints his answer as JSON; `look show` is for a glance. It steers you
-  and is never a record: kept judgments go through the product's own review
-  surface, shared or lasting material is a published page
-  (`~/dev/rig/look/README.md`).
+- **No terminal graphics outside nuts-to-soup** (Billy, 2026-11-19). The
+  kitty graphics protocol stalled loading images in Rex, so `look` is gone.
+  When Billy's call depends on seeing images or clips, give him the paths
+  (or a folder) to open and ask in chat, or publish a page; kept judgments
+  go through the product's own review surface.
 - **Another agent session** (Claude, Codex) still opens as a visible pane
   **to the right** of yours (the `handoff` skill does this).
 - **No new tabs or sessions** unless Billy asks. The ship workers' session
