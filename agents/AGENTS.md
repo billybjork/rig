@@ -64,6 +64,13 @@ and the agent's job: Billy never creates, names, or cleans up worktrees.
   branch. Uncommitted changes there that you did not make belong to another
   session; leave them and take a worktree.
 - Remove your worktree once its branch has landed.
+- A new worktree starts warm: the project's bootstrap clones its gitignored
+  build trees (deps, `_build`, `node_modules`) from the primary checkout with
+  APFS copy-on-write (`cp -Rc`), so it costs seconds and only the files it
+  rewrites take disk (soco's and heaters' bootstraps do this). The third
+  project to need it gets one shared helper in rig that both of those move
+  onto, not a third copy. A Python `.venv` is not cloned (it holds absolute
+  paths); `uv sync` rebuilds it from uv's cache.
 
 ## Shipping
 
