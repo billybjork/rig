@@ -63,10 +63,11 @@ over days (the soak below), and part times at 4 and 8 vCPU.
 ## Costs
 
 Standalone VMs: $0.105 per 2 vCPU / 4 GiB hour, by the second, nothing for
-CPU and memory while stopped. The gates used about 400 to 600 part-hours a
-month in November (`check-remote.tsv`), fewer once parts run faster: about
-$100 a month at 4 vCPU or $200 at 8, plus $15, plus disk beyond the 100 GB
-allowance. Whether a paused VM counts as stopped is check 0a.
+CPU and memory while stopped. Nov 1 to 20 ran 389 heaters gates (194
+part-hours) and 709 soco gates (187): about 580 and 1060 a month. At 4
+vCPU a heaters gate holds VMs about 0.45 h and a soco gate 0.2 h, so about
+480 VM-hours, **about $100 a month, plus $15** (at 8 vCPU about $170);
+disk stays inside the 100 GB with no idle VMs. Sprites: about $95.
 
 ## Order
 
@@ -86,6 +87,55 @@ e. The soak on `rig-trial-2` (below): any change of boot id in
    `~/trial/results.tsv`, any gap in `rig-trial-1:~/tick`.
 
 Then the numbers go to Billy for go or no-go.
+
+Measured 2026-11-20 (Personal active):
+
+a. **Not answerable from the CLI.** `billing usage` and `billing invoices`
+   show no metered compute at all (the upcoming invoice read $15 after
+   ~3 standalone VM-hours), and there is no `stop`: `pause` ("free its
+   CPU and memory") is the only stopped state, and the docs say a stopped
+   standalone VM is not billed for CPU and memory. The pool below keeps no
+   idle VMs, so it does not depend on the answer; the workbench's pooled
+   VMs would (ask support, or read December's invoice).
+b. A VM's disk goes to 1024 GB (`resize --disk`; above that support
+   reviews it). Every copy counts in full: 15 VMs of ~15 GB read 229 GB.
+   Over the 100 GB allowance, disk is $0.08/GiB-month, averaged over the
+   cycle; bandwidth over 200 GB is $0.05/GiB.
+c. Ten standalone copies of `rig-trial-2` made at once in 2.3 s, paused
+   together in 2.9 s, resumed together and answering SSH in 3.3 s, each
+   with its boot id unchanged. 30 parallel `ssh exe.dev ls` took 0.7 s with
+   no refusals.
+d. One part per VM, each part's run alone (setup 1 to 6 s, staging not
+   counted), the pool's file lists, warm caches. Pool: Nov 20's green gates
+   (`check-remote.tsv`, which includes staging and setup).
+
+   | part | Sprite (8) | exe 2 vCPU | exe 4 / 8 GB | exe 8 / 16 GB |
+   |---|---|---|---|---|
+   | heaters static | 208 to 288 | 212 | 164 | 150 |
+   | heaters test-1 | 627 to 818 | | 467 | 507 |
+   | heaters test-2 | 366 to 797 | 549 to 556 | 422 | 380 |
+   | heaters test-3 | 338 to 533 | | 475 | 356 |
+   | soco static-1 | 195 to 245 | 244 | 162 | 144 |
+   | soco static-2 | 143 to 291 | 195 | 115 | 95 |
+   | soco static-3 | 80 to 131 | 82 | 47 | 39 |
+   | soco test-1 | 131 to 224 | 204 to 213 | 149 | 118 |
+   | soco test-2 | 159 to 365 | 203 | 146 | 111 |
+
+   A gate's wall is its longest part: heaters about 8 min at 4 vCPU (8 at
+   8) against 11 to 14 on the pool, soco under 3 against 3.5 to 6.5. The
+   suites do not scale past 4 vCPU (a sync half and max_cases 8), so **4
+   vCPU / 8 GB is the size**. One exception: soco's cold dialyzer PLT
+   build was OOM-killed at 8 GB (beam at 7.7 GB RSS with 4 GB of swap; it
+   passed at 2 and at 8 vCPU). The golden carries warm PLTs, so this bites
+   only a ship that changes `mix.lock` or `.tool-versions`: a `warm` part
+   whose key misses runs on 8 vCPU / 16 GB.
+   Reds seen, none exe's: soco `DevGateTest` "inner-loop commands run
+   beside a held gate" once (cold, 8 vCPU, a 10 s timeout); the trial's
+   first command files lacked the file lists, so each test part ran the
+   whole suite (1782 tests green in each).
+e. No restart: `rig-trial-2` kept one life (`500af940`) through 3.5 h of
+   parts, and `rig-trial-1`'s tick has no gap over 2 s in 3.7 h. The soak
+   continues (`~/trial/loop.sh`).
 
 ### 1. The image on exe.dev
 
@@ -110,11 +160,13 @@ backend stays until the last project leaves it.
 
 ### 3. `Fleet` on exe.dev
 
-The pool is `rig-gate-1..N`, standalone copies of `rig-golden`, N about 12
-(two or three ships at once, five parts each). Idle is paused; a lease
-resumes, a release pauses. A strike or a stale golden replaces the VM (`rm`,
-`cp`), which takes the place of restoring a checkpoint. A golden refresh
-(a stamp change) provisions `rig-golden` once and recopies the idle VMs.
+There is no standing pool (check 0: a copy costs about 1.5 s and is warm,
+and an idle VM would cost disk and maybe compute). A lease is `cp
+rig-golden --standalone --cpu=4 --memory=8GB` and a release is `rm`; up to
+about 15 at once (two or three ships, five parts each). A strike is just
+the next lease's fresh copy, which takes the place of restoring a
+checkpoint. A golden refresh (a stamp change) provisions a new golden
+once (on 8 vCPU / 16 GB, which the cold PLT needs) and swaps it in.
 heaters moves first, then soco, each by its `.gate.json`; the Sprite pool is
 destroyed after a few green ships on the new one (Billy's call).
 
@@ -141,4 +193,5 @@ scripts.
 
 `rig-trial-2` soaks heaters test-2 and soco test-1 in turn
 (`~/trial/loop.sh`; stop with `rm ~/trial/loop.on`); `rig-trial-1` writes a
-tick a second. Delete both (`ssh exe.dev rm`) once step 0 is done.
+tick a second. Delete both (`ssh exe.dev rm`) on Billy's go (the soak runs
+until then); the check copies are deleted.
