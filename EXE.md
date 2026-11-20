@@ -150,6 +150,21 @@ uses (rust, go, bun: check each project's suite). A bare image lacks
 fails otherwise). Then a golden VM `rig-golden`: the image, each project's
 setup and warm caches, full histories.
 
+Done 2026-11-20 (Billy's go the same day): `gate/exe/base.sh` carries what
+the bare image lacks (sudo, curl, git; user `gate`; Python 3.13 from uv
+under `/opt/gate/python`, first on a login shell's PATH through
+`/etc/profile.d/gate.sh`, so parts run in a login shell: `su - gate -c`).
+`provision.sh` is unchanged, since its hash is the Sprite pool's stamp.
+The trial's parts all ran green with nothing from `/.sprite/bin` but
+Python. exe-init is PID 1 (no systemd, and `--setup-script` runs only at
+first boot), so `bash base.sh boot` (the `/dev` links) is the backend's to
+run on each fresh copy before it stages. `rig-golden` is a standalone
+8 vCPU / 16 GB VM with a 60 GB disk (16 GB for the cold PLT): base 16 s,
+both projects' toolchains 82 s, and each repo's full `origin/main` history
+from a bundle (soco 320 MB, heaters 10 MB) at `~gate/<name>`. Its setup and
+warm caches wait for step 2: `gate golden` runs them through the exe
+backend unchanged.
+
 ### 2. A host backend in `gate/`
 
 The runner talks to a host through stage, launch, poll and end. On exe.dev
