@@ -133,6 +133,10 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
    and Railway keep their env vars, pushed from the store on rotation.
 5. Agent sessions on Sprites, then Sprites as Rex hosts.
 
+The move from Sprites to exe.dev, the gate pool and a workbench VM for
+agents' heavy runs, is planned in `EXE.md` (Billy, 2026-11-20); it
+supersedes the Sprite parts of step 3 and of `gate/FLEET.md` as it lands.
+
 The audit behind this (Sprite failure modes, duplication, secrets) is in the
 session of 2026-10-28; the Sprite gate's open items are in
 `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`.
