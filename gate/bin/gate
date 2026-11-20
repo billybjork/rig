@@ -5,7 +5,7 @@
 #   gate check [tier]           the split gate on HEAD, on the project's Sprite pool
 #   gate run <command...>       a command on the working tree, on a dev Sprite
 #   gate pool status|provision|rebuild|exec|warm   the pool's Sprites
-#   gate golden <sprite>        set one Sprite up and warm its caches (rigd's Fleet)
+#   gate golden <host>          set one Sprite or exe.dev VM (<vm>.exe.xyz) up and warm its caches
 #   gate times                  rewrite the suite's partition weights
 #   gate stamp [rev]            HEAD's (or rev's) provision stamp
 #   gate lock ...               the machine's gate lock (libexec/lock)
@@ -68,12 +68,19 @@ stop() {
   trap '' TERM INT HUP
   kill -TERM "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
+  local end='for f in ~/parts/"$1"/job.pid ~/parts/"$1"/keeper.pid; do
+    p=$(cat "$f" 2>/dev/null) && kill -KILL -- "-$p" 2>/dev/null
+  done; true'
   while read -r sprite id; do
     echo "gate: ending $id on $sprite" >&2
-    "$gate/libexec/deadline" 30 "${GATE_SPRITE_CLI:-sprite}" -s "$sprite" exec -- bash -c '
-      for f in ~/parts/"$1"/job.pid ~/parts/"$1"/keeper.pid; do
-        p=$(cat "$f" 2>/dev/null) && kill -KILL -- "-$p" 2>/dev/null
-      done; true' stop "$id" >/dev/null 2>&1 &
+    case "$sprite" in
+      # An exe.dev VM (lib/gate/exe.ex): its parts are gate's, and an id is
+      # word characters, dots and dashes, so it needs no quoting.
+      *.exe.xyz)
+        "$gate/libexec/deadline" 30 --in <(printf '%s\n' "$end") "${GATE_SSH:-ssh}" -o BatchMode=yes \
+          -o ConnectTimeout=20 -o UserKnownHostsFile="$gate/exe/known_hosts" -o StrictHostKeyChecking=yes "$sprite" "su - gate -c 'bash -s -- $id'" ;;
+      *) "$gate/libexec/deadline" 30 "${GATE_SPRITE_CLI:-sprite}" -s "$sprite" exec -- bash -c "$end" stop "$id" ;;
+    esac >/dev/null 2>&1 &
   done <"$parts"
   wait
   rm -f "$parts"

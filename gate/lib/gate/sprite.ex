@@ -64,7 +64,18 @@ defmodule Gate.Sprite do
   busy uplink, so every rerun sent it again (2026-11-16).
   """
   def holds(sprite, name, candidates) do
-    script = ~S"""
+    case call(
+           ["-s", sprite, "exec", "--", "bash", "-c", holds_script(), "holds", name | candidates],
+           60
+         ) do
+      {out, 0} -> parse_holds(out)
+      {out, status} -> {:error, "exit #{status}: #{last_line(out)}"}
+    end
+  end
+
+  @doc false
+  def holds_script do
+    ~S"""
     cd ~/"$1" 2>/dev/null || { echo tip; echo have; exit 0; }
     shift
     echo "tip $(git rev-parse -q --verify refs/laptop/gate)"
@@ -73,24 +84,21 @@ defmodule Gate.Sprite do
     done
     echo have
     """
+  end
 
-    case call(["-s", sprite, "exec", "--", "bash", "-c", script, "holds", name | candidates], 60) do
-      {out, 0} ->
-        found =
-          for line <- String.split(out, ["\n", "\r"], trim: true),
-              [key, sha] <- [String.split(String.trim(line), " ", parts: 2)],
-              key in ~w(tip have),
-              sha =~ ~r/\A[0-9a-f]{40}\z/,
-              into: %{},
-              do: {key, sha}
+  @doc false
+  def parse_holds(out) do
+    found =
+      for line <- String.split(out, ["\n", "\r"], trim: true),
+          [key, sha] <- [String.split(String.trim(line), " ", parts: 2)],
+          key in ~w(tip have),
+          sha =~ ~r/\A[0-9a-f]{40}\z/,
+          into: %{},
+          do: {key, sha}
 
-        if out =~ ~r/^have/m,
-          do: {:ok, found["tip"], found["have"]},
-          else: {:error, "an unreadable answer: #{last_line(out)}"}
-
-      {out, status} ->
-        {:error, "exit #{status}: #{last_line(out)}"}
-    end
+    if out =~ ~r/^have/m,
+      do: {:ok, found["tip"], found["have"]},
+      else: {:error, "an unreadable answer: #{last_line(out)}"}
   end
 
   @doc """
@@ -272,8 +280,12 @@ defmodule Gate.Sprite do
   end
 
   @doc "Ends the part's job and keeper: TERM, then KILL 3 s later."
-  def kill(sprite, id) do
-    script = ~S"""
+  def kill(sprite, id),
+    do: call(["-s", sprite, "exec", "--", "bash", "-c", kill_script(), "kill", id], 30)
+
+  @doc false
+  def kill_script do
+    ~S"""
     d=~/parts/$1
     for sig in TERM KILL; do
       for f in job keeper; do
@@ -283,8 +295,6 @@ defmodule Gate.Sprite do
     done
     true
     """
-
-    call(["-s", sprite, "exec", "--", "bash", "-c", script, "kill", id], 30)
   end
 
   def last_line(text) do

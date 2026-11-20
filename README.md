@@ -212,8 +212,10 @@ Step 3's slice 3, under way (its plan: `gate/FLEET.md`):
 Moving off Sprites to exe.dev (`EXE.md`; Billy's go 2026-11-20): step 0's
 checks measured (4 vCPU / 8 GB parts, a fresh copy of the golden per
 lease, about $115 a month against the Sprites' $95); step 1 done
-(`gate/exe/base.sh`, `rig-golden` provisioned with both histories, paused).
-Next, step 2: an exe host backend in `gate/`, then `gate golden` on
-`rig-golden`.
+(`gate/exe/base.sh`, `rig-golden` provisioned with both histories, paused);
+step 2 done (`gate/lib/gate/exe.ex`: a host named `<vm>.exe.xyz` runs its
+parts over `ssh`; `rig-golden` set up and warm for both projects through
+`gate golden`). Next, step 3: rigd's `Fleet` leases a fresh copy of
+`rig-golden` per part, heaters first.
 
 Then agents on Sprites (step 5).

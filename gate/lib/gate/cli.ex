@@ -33,7 +33,7 @@ defmodule Gate.CLI do
 
           _ ->
             raise Gate.Error,
-                  "usage: gate check [tier] | run <cmd...> | pool ... | golden <sprite> | times | stamp [rev]"
+                  "usage: gate check [tier] | run <cmd...> | pool ... | golden <host> | times | stamp [rev]"
         end
       rescue
         e in Gate.Error ->

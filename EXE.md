@@ -173,6 +173,23 @@ nohup job.sh` with no keeper or TTY; poll reads the same files; life is
 still the boot id. `local.sh` is off there (the disk is local). The Sprite
 backend stays until the last project leaves it.
 
+Done 2026-11-20: `gate/lib/gate/exe.ex`, chosen by `gate/lib/gate/host.ex`
+for any host named `<vm>.exe.xyz` (gate/README.md, "On exe.dev"). The
+stage and launch run `base.sh boot` as root first, then everything runs
+as `gate` through `su - gate -c`; `exe/launch.sh` starts the job and
+returns (no keeper, no TTY); the job's swap is a plain 4 GiB file
+(`/var/tmp/gate-swap`, `HOST=exe` in the part's vars) and the local disk
+is off. Every VM presents exe's one RSA host key, so it is pinned for
+`*.exe.xyz` in `gate/exe/known_hosts`, and a copy made a second ago is
+known with `StrictHostKeyChecking=yes`. A gate stopped from outside ends
+its exe parts over `ssh` (`bin/gate`). `gate golden rig-golden.exe.xyz`
+set the golden up and warmed it: heaters setup 12 s and PLT 280 s (stamp
+`773ce604…`, `ae718087`), soco setup 23 s and PLT 454 s from the laptop's
+seed (stamp `486ccc69…`, `1a90154b`). A copy of it at 4 vCPU / 8 GB
+(`cp rig-golden rig-part-test --standalone --cpu=4 --memory=8GB`, 1 s)
+ran soco test-1 green in 141 s through the engine, the fresh copy's
+missing `/dev/fd` linked by the stage.
+
 ### 3. `Fleet` on exe.dev
 
 There is no standing pool (check 0: a copy costs about 1.5 s and is warm,

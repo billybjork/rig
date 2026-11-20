@@ -14,10 +14,10 @@ one-line wrappers around `bin/gate`.
 gate check [tier]            # the split gate on HEAD, on the project's pool
 gate run <command...>        # a command on the working tree, on a dev Sprite
 gate pool status|provision <s>|rebuild <s>|exec <s> <cmd...>|warm [s...]
-gate golden <sprite>         # the check tier's parts in turn on one Sprite (rigd's Fleet)
+gate golden <host>           # set one Sprite or exe.dev VM up and warm its caches
 gate times                   # rewrite the suite's partition weights
 gate stamp [rev]             # HEAD's (or rev's) provision stamp
-gate self-check              # this runner's gate (compile, format, 24 tests)
+gate self-check              # this runner's gate (compile, format, tests)
 ```
 
 The ship worker runs a project's gate with `RIG` set to its own clone of
@@ -89,6 +89,27 @@ while warming relaunches the part on the same Sprite instead, where the
 half-built cache is. A keeper that dies is relaunched. A gate stopped
 from outside (a closed terminal, the worker's alarm, passed on by the lock)
 ends the parts it launched.
+
+## On exe.dev
+
+A host named `<vm>.exe.xyz` is an exe.dev VM (`lib/gate/exe.ex`, chosen by
+`lib/gate/host.ex`; rig's `EXE.md`), and every other a Sprite. The part is
+the same (the same tar, `sprite/job.sh`, `sprite/stage.sh` and
+`sprite/poll.sh`), carried by plain `ssh` calls under `libexec/deadline`.
+What differs:
+
+- exe's SSH logs in as root, and a part runs as `gate` in a login shell
+  (`su - gate -c`), whose profile puts Python 3.13 first (`exe/base.sh`).
+- The stage and the launch first run `exe/base.sh boot` as root: exe-init is
+  PID 1, with no systemd, so a fresh copy or a restarted VM lacks
+  `/dev/fd`, and process substitution fails without it.
+- The launch (`exe/launch.sh`) starts the job detached and returns: the VM
+  runs on with nobody connected, so there is no keeper and no TTY.
+- No local disk (the one disk is local NVMe), and the job's 4 GiB of swap
+  is a plain file (`/var/tmp/gate-swap`), not a loop device.
+
+`gate golden rig-golden.exe.xyz`, run in a project's checkout, readies the
+golden VM as it does a Sprite.
 
 ## The local disk
 

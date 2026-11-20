@@ -2,7 +2,7 @@ defmodule Gate.Engine do
   @moduledoc """
   Runs parts on Sprites and judges them. Each part is staged (its tar:
   the Sprite-side job, its vars and argv, the git bundle that brings the
-  Sprite to the commit) and launched detached (`Gate.Sprite.launch/4`),
+  Sprite to the commit) and launched detached (`Gate.Host.launch/4`: a Fly Sprite or an exe.dev VM),
   then polled every `limits.poll` seconds, one call at a time, each poll
   appending the log's new bytes to the part's log here.
 
@@ -41,7 +41,7 @@ defmodule Gate.Engine do
   relaunched while its job runs.
   """
 
-  alias Gate.{Config, Sprite}
+  alias Gate.{Config, Host, Sprite}
 
   defmodule Job do
     @moduledoc "A part: its name, its command, the caches it warms, and a working tree to lay over the commit (`gate run`)."
@@ -175,7 +175,7 @@ defmodule Gate.Engine do
 
     with {:ok, tar} <- pack(ctx, part),
          :ok <- stage(ctx, part, tar),
-         {:ok, life} <- Sprite.launch(sprite, id, nil, ctx.config.limits["launch"]) do
+         {:ok, life} <- Host.launch(sprite, id, nil, ctx.config.limits["launch"]) do
       if file = System.get_env("GATE_PARTS_FILE"),
         do: File.write!(file, "#{sprite} #{id}\n", [:append])
 
@@ -199,7 +199,7 @@ defmodule Gate.Engine do
     t0 = now()
 
     result =
-      case Sprite.stage(part.sprite, part.id, tar, limit) do
+      case Host.stage(part.sprite, part.id, tar, limit) do
         {:error, {:timeout, why}} when size >= @big_upload ->
           note(part, "#{why}; uploading #{mb} MB again with #{limit * 2} s")
 
@@ -207,7 +207,7 @@ defmodule Gate.Engine do
             "#{part.job.name}: the #{mb} MB upload to #{part.sprite} outlasted #{limit} s; again with #{limit * 2} s"
           )
 
-          Sprite.stage(part.sprite, part.id, tar, limit * 2)
+          Host.stage(part.sprite, part.id, tar, limit * 2)
 
         other ->
           other
@@ -233,8 +233,8 @@ defmodule Gate.Engine do
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
 
-    for file <- ["job.sh", "local.sh", "launch.sh"],
-        do: File.cp!(Path.join(Sprite.root(), "sprite/#{file}"), Path.join(dir, file))
+    for {source, file} <- Host.files(part.sprite),
+        do: File.cp!(Path.join(Sprite.root(), source), Path.join(dir, file))
 
     if ctx.config.image, do: File.cp!(Gate.Stamp.image(), Path.join(dir, "image.sh"))
 
@@ -244,7 +244,7 @@ defmodule Gate.Engine do
         File.exists?(seed),
         do: File.cp!(seed, Path.join(dir, "seed-#{warm.name}.tar"))
 
-    File.write!(Path.join(dir, "vars"), vars(ctx, part.job))
+    File.write!(Path.join(dir, "vars"), vars(ctx, part.job, part.sprite))
     File.write!(Path.join(dir, "argv"), Enum.map(part.job.argv, &[&1, 0]))
 
     if overlay = part.job.overlay do
@@ -276,11 +276,13 @@ defmodule Gate.Engine do
     Path.join([dir, config.name, warm <> ".tar"])
   end
 
-  defp vars(ctx, job) do
+  defp vars(ctx, job, host) do
     c = ctx.config
-    # A golden's checkpoint holds only the root disk, and `gate run`'s dev
-    # Sprite gets by as it is (`sprite/local.sh`).
-    local = if ctx.seed or job.overlay, do: %{}, else: c.local
+    exe = Host.exe?(host)
+    # A golden's checkpoint holds only the root disk, `gate run`'s dev
+    # Sprite gets by as it is (`sprite/local.sh`), and an exe.dev VM's one
+    # disk is local.
+    local = if ctx.seed || job.overlay || exe, do: %{}, else: c.local
 
     """
     NAME=#{q(c.name)} SHA=#{q(ctx.sha)} STAMP=#{q(ctx.stamp)} SETUP=#{q(c.setup)}
@@ -291,7 +293,8 @@ defmodule Gate.Engine do
     WARM_CMDS=(#{qs(Enum.map(job.warm, & &1.command))})
     LOCAL_PATHS=(#{qs(Map.get(local, "paths", []))})
     LOCAL_TOOLS=(#{qs(Map.get(local, "tools", []))})
-    LOCAL_OFF=#{if ctx.seed, do: "1", else: "''"}
+    LOCAL_OFF=#{if ctx.seed or exe, do: "1", else: "''"}
+    HOST=#{if exe, do: "exe", else: "sprite"}
     """
   end
 
@@ -332,7 +335,7 @@ defmodule Gate.Engine do
   end
 
   defp holds(sprite, name, candidates, tries \\ 2) do
-    case Sprite.holds(sprite, name, candidates) do
+    case Host.holds(sprite, name, candidates) do
       {:error, _} when tries > 1 ->
         Process.sleep(2000)
         holds(sprite, name, candidates, tries - 1)
@@ -360,7 +363,7 @@ defmodule Gate.Engine do
     part = state.parts[i]
     limits = ctx.config.limits
 
-    case Sprite.poll(part.sprite, part.id, part.offset, 30) do
+    case Host.poll(part.sprite, part.id, part.offset, 30) do
       {:ok, :gone, _} ->
         failed(ctx, state, part, "the Sprite has no such part (restored or rebuilt?)")
 
@@ -440,11 +443,11 @@ defmodule Gate.Engine do
         failed(ctx, state, part, "the part ended without a status")
 
       now() - part.phase_at > limit * 1000 ->
-        Sprite.kill(part.sprite, part.id)
+        Host.kill(part.sprite, part.id)
         failed(ctx, state, part, "its #{phase} phase outlasted #{limit} s")
 
       s["keeper"] == "down" ->
-        case Sprite.launch(part.sprite, part.id, "keep", ctx.config.limits["launch"]) do
+        case Host.launch(part.sprite, part.id, "keep", ctx.config.limits["launch"]) do
           {:ok, _} -> note(part, "its keeper had gone; relaunched it")
           {:error, why} -> note(part, "its keeper had gone and would not relaunch: #{why}")
         end
@@ -457,7 +460,7 @@ defmodule Gate.Engine do
   end
 
   defp relaunch(ctx, state, part) do
-    case Sprite.launch(part.sprite, part.id, nil, ctx.config.limits["launch"]) do
+    case Host.launch(part.sprite, part.id, nil, ctx.config.limits["launch"]) do
       {:ok, life} ->
         put_in(state.parts[part.i], %{part | life: life, phase: "setup", phase_at: now()})
 

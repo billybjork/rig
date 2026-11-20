@@ -7,7 +7,8 @@
 # project's setup script (SETUP), the build caches `git clean` keeps (KEEP),
 # the caches to warm first (WARM_NAMES, WARM_KEYS, WARM_CMDS), and what goes
 # on the local disk (LOCAL_PATHS, LOCAL_TOOLS, or LOCAL_OFF for a golden;
-# local.sh); argv holds the command, NUL-separated.
+# local.sh), and the host's kind (HOST: `sprite`, or `exe` for an exe.dev
+# VM, rig's EXE.md); argv holds the command, NUL-separated.
 #
 # Its phases go to ~/parts/<id>/phase ("setup", "warm", "run", each with
 # the time it began), so the laptop holds each to its own limit: the
@@ -20,7 +21,7 @@
 set -uo pipefail
 id=${1:?usage: job.sh <id>}
 d=~/parts/$id
-NAME= SHA= STAMP= SETUP=
+NAME= SHA= STAMP= SETUP= HOST=sprite
 KEEP=() PROVISION=() WARM_NAMES=() WARM_KEYS=() WARM_CMDS=()
 LOCAL_PATHS=() LOCAL_TOOLS=() LOCAL_OFF=
 . "$d/vars"
@@ -73,7 +74,14 @@ swap_drop() { # the file, once nothing holds it
   done
   sudo rm -f "$swap"
 }
-if [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
+# An exe.dev VM's disk is local ext4, where a plain swap file works.
+if [ "$HOST" = exe ] && [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
+  swap=/var/tmp/gate-swap
+  if [ "$(wc -l </proc/swaps)" -le 1 ]; then
+    { [ -f "$swap" ] || { sudo fallocate -l 4G "$swap" && sudo chmod 600 "$swap" && sudo mkswap "$swap" >/dev/null; }; } &&
+      sudo swapon "$swap" && say "swap: 4 GiB in $swap" || say "swap: could not turn it on"
+  fi
+elif [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
   swap=/tmp/gate-swap
   swap_bytes=$((4 * 1024 * 1024 * 1024))
   # Another size is an older part's. Failing to drop it leaves it in use.

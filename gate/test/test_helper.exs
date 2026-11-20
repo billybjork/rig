@@ -9,6 +9,10 @@ defmodule Gate.Fake do
   ("Error: connection closed"); one with `tty-silent` runs a TTY exec but
   shows none of its output, and `tty-lossy` all but its launch line; one with
   `slow-stage` takes that many seconds over each upload. Checkpoints go to `<sprite>/checkpoints`.
+
+  A host named `<vm>.exe.xyz` is an exe.dev VM, reached by a fake `ssh`
+  (`$GATE_SSH`) that runs its remote command in the same kind of home, and
+  a fake `su` that runs `su - gate -c <command>` there.
   """
 
   import ExUnit.Assertions
@@ -51,6 +55,31 @@ defmodule Gate.Fake do
   exec "$@"
   """
 
+  @ssh ~S"""
+  #!/bin/bash
+  root=$FAKE_SPRITES
+  while [ "${1:-}" = -o ]; do shift 2; done
+  host=$1 remote=$2
+  [ -d "$root/$host" ] || { echo "ssh: Could not resolve hostname $host"; exit 255; }
+  [ ! -e "$root/$host/down" ] || { echo "ssh: connect to host $host port 22: Connection refused"; exit 255; }
+  export HOME=$root/$host/home
+  cd "$HOME"
+  echo "$host ssh $remote" >>"$root/calls"
+  # In a session of its own, as a real remote command is out of reach of
+  # what ends the client (`libexec/deadline` kills its group); fd 3 keeps
+  # stdin, which a background job would lose.
+  exec 3<&0
+  setsid bash -c "$remote" <&3 3<&- &
+  wait $!
+  """
+
+  @su ~S"""
+  #!/bin/bash
+  # su - gate -c <command>
+  [ "$1 $2 $3" = "- gate -c" ] || { echo "su: unexpected $*"; exit 1; }
+  exec bash -c "$4"
+  """
+
   @setsid ~S"""
   #!/usr/bin/perl
   use POSIX ();
@@ -77,6 +106,9 @@ defmodule Gate.Fake do
 
     executable(Path.join(bin, "sprite"), @sprite_cli)
     executable(Path.join(bin, "setsid"), @setsid)
+    executable(Path.join(bin, "fake-ssh"), @ssh)
+    executable(Path.join(bin, "su"), @su)
+    System.put_env("GATE_SSH", Path.join(bin, "fake-ssh"))
 
     gate =
       Map.merge(
