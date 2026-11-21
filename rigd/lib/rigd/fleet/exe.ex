@@ -580,7 +580,13 @@ defmodule Rigd.Fleet.Exe do
   # A short name part: time, then a random tail, lowercase.
   defp suffix do
     time = Calendar.strftime(DateTime.utc_now(), "%m%d-%H%M%S")
-    tail = :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
+    # Not :crypto: rigd's release does not carry it.
+    tail =
+      (0x1000000 + :rand.uniform(0xFFFFFF) - 1)
+      |> Integer.to_string(16)
+      |> String.slice(1, 6)
+      |> String.downcase()
+
     "#{time}-#{tail}"
   end
 end
