@@ -218,8 +218,31 @@ on it was green in 534 s (static 172, test-1 524, test-2 423, test-3
 Live 2026-11-20 (rig 3a663fa: the first live lease crashed on
 `:crypto`, which rigd's release lacks, and took the whole Fleet down for
 25 min; a test now holds rigd to its release's applications). heaters
-gates on it since #871 (green in 559 s on four copies). soco follows
-after a few green heaters ships.
+gates on it since #871 (green in 559 s on four copies). soco since #895
+(2026-11-21, green in 669 s: static-1 656 with its PLT built cold on the
+big size, the others 80 to 179). Its trial gate before that had static-1
+red after 747 s: soco's dialyzer runs in `MIX_ENV=dev` but its warm
+command built the PLT in test, so every copy rebuilt it for `_build/dev`
+(4.5 min after a dev compile) and dialyzer then failed on 8 GB; a Sprite
+had paid that once and kept it. #895 warms in dev (on a copy of the
+golden, dialyzer then passed in 2m17s), and rig 0a08630 puts a warm's
+command in its key, so the golden refreshed for it. On the refreshed
+golden soco's `main` gated green in 232 s (static-1 213, static-2 155,
+test-1 145, test-2 141, static-3 60; the Sprite pool's last soco gates
+took 246 to 280).
+
+Watch: soco's `DevGateTest` "inner-loop commands run beside a held gate"
+(a spawned `mix` must answer within 10 s while the suite runs) has gone
+red on exe twice in its first handful of gates (check 0d, and 7cc5f69's
+test-2 on 2026-11-21, whose output came just after the timeout), against
+once on the Sprites since Nov 4. If it keeps showing, it is soco's to
+make the test hold on 4 vCPU (not by weakening it), or test parts get
+more cores.
+
+What is left of step 3: retire the Sprite pool once Billy says so (no
+project gates on it now). Keep the Sprite backend (`gate/lib/gate/sprite.ex`,
+`Rigd.Fleet`'s Sprite side) until then; soco's dev Sprite `soco-dev-1` and
+heaters' `heaters-dev-1` are step 4's (the workbench).
 
 ### 4. The workbench
 

@@ -217,7 +217,11 @@ step 2 done (`gate/lib/gate/exe.ex`: a host named `<vm>.exe.xyz` runs its
 parts over `ssh`; `rig-golden` set up and warm for both projects through
 `gate golden`); step 3 built (`Rigd.Fleet.Exe`: a fresh copy of the
 golden per part, `"pool": "exe"`; the golden refreshed on a key change),
-live: heaters gates on it since #871 (559 s; the Sprite pool took 11 to
-14 min); soco next, after a few green heaters ships.
+live for both: heaters gates on it since #871 (559 s; the Sprite pool took
+11 to 14 min), soco since #895 (2026-11-21; its parts 80 to 180 s, against
+3.5 to 6.5 min on the pool). soco's move needed its PLT warmed in dev, the
+env its dialyzer runs in, and a warm key that includes its command (rig
+0a08630). The Sprite pool now gates nothing; retiring it is Billy's call
+(`EXE.md`, the end of step 3).
 
 Then agents on Sprites (step 5).

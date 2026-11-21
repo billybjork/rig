@@ -187,8 +187,8 @@ it as `"pool": "exe"`: each part's lease (`Gate.Lease`) says `"pool":
   holder that goes without one. So a strike is just the next lease's
   fresh copy, and a rerun lands on a new VM. At most `exe.max` (15) at
   once; the rest queue, ships first.
-- **The big size.** A part needing a warm cache whose key the golden
-  lacks gets 8 vCPU / 16 GB (`exe.big`): soco's cold dialyzer PLT was
+- **The big size.** A part needing a warm cache whose key (its files,
+  the stamp and its command) the golden lacks gets 8 vCPU / 16 GB (`exe.big`): soco's cold dialyzer PLT was
   OOM-killed at 8 GB (EXE.md, check 0d).
 - **The golden** is the newest paused VM named `rig-golden*` whose comment
   reads `golden heaters <stamp> heaters-plt <key> soco ...`: each
