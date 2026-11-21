@@ -22,8 +22,13 @@ defmodule Rigd.Fleet.Exe do
   `origin/main` when it was made (`gate keys`, `Rigd.Fleet.Golden.keys/2`).
   Every 10 minutes it reads those keys again; when they differ, it copies
   the golden to `<exe.golden>-<time>` at the big size (the cold PLT), runs
-  each project's `gate golden` there, pauses it and writes its comment,
-  which makes it the golden. The old one is removed once no copy of it
+  each project's `gate golden` there, flushes its disk (`sync`), pauses it
+  and writes its comment, which makes it the golden. A `cp` copies the
+  disk and not the memory, so what the setup left in the page cache would
+  be lost: heaters' golden of 2026-11-21 02:38 had 17 zero-length test
+  beams and every heaters test part on it was red. The keys include
+  `golden` (`@format`), how a golden is made: a change to it remakes the
+  golden. The old one is removed once no copy of it
   is under way. Until then leases go on from the old golden (each part
   installs what it lacks). With no golden comment anywhere, the VM named
   `exe.golden` is the seed (keys unknown, so it is refreshed first).
@@ -44,10 +49,18 @@ defmodule Rigd.Fleet.Exe do
 
   alias Rigd.Fleet.Golden
 
+  # How a golden is made, as a key the golden must hold (16 hex digits, as
+  # `Golden.comment_keys/1` reads them): 2 since its disk is synced before
+  # the pause.
+  @format "0000000000000002"
+
   @every 10 * 60 * 1000
   @drain_ms 60_000
   @part "rig-part-"
   @suffix ".exe.xyz"
+
+  @doc "How a golden is made, the key `golden` every golden must hold."
+  def format, do: @format
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -245,6 +258,7 @@ defmodule Rigd.Fleet.Exe do
 
   def handle_info({ref, keys}, %{reading: ref} = st) do
     Process.demonitor(ref, [:flush])
+    keys = keys && Map.put(keys, "golden", @format)
     {:noreply, refresh(%{st | target: keys || st.target, reading: nil})}
   end
 
@@ -498,9 +512,19 @@ defmodule Rigd.Fleet.Exe do
          :ok <- api(opts, ["comment", name, "refreshing"], 60),
          :ok <- answers(opts, host),
          {:ok, keys} <- setups(opts, host),
+         keys = Map.put(keys, "golden", @format),
+         :ok <- flush(opts, host),
          :ok <- api(opts, ["pause", name], 300),
          :ok <- api(opts, ["comment", name, Golden.comment(keys)], 60) do
       {:golden, %{name: name, keys: keys}}
+    end
+  end
+
+  # Writes the VM's page cache to its disk, which is all a `cp` copies.
+  defp flush(opts, host) do
+    case call(opts, pin(opts) ++ [host, "sync"], 300) do
+      {_, 0} -> :ok
+      {out, status} -> {:error, "sync on #{host} failed (#{status}: #{Golden.last_line(out)})"}
     end
   end
 
@@ -552,11 +576,13 @@ defmodule Rigd.Fleet.Exe do
   # A fresh copy is `starting` for a moment: wait (a minute at most) until
   # its SSH answers, so the part's first stage does not fail on it. Every
   # VM presents exe's one host key, pinned in `gate/exe/known_hosts`.
-  defp answers(opts, host, tries \\ 30) do
+  defp pin(opts) do
     known = Path.join(Path.dirname(Path.dirname(opts[:gate])), "exe/known_hosts")
-    pin = ["-o", "UserKnownHostsFile=#{known}", "-o", "StrictHostKeyChecking=yes"]
+    ["-o", "UserKnownHostsFile=#{known}", "-o", "StrictHostKeyChecking=yes"]
+  end
 
-    case call(opts, pin ++ [host, "true"], 20) do
+  defp answers(opts, host, tries \\ 30) do
+    case call(opts, pin(opts) ++ [host, "true"], 20) do
       {_, 0} ->
         :ok
 

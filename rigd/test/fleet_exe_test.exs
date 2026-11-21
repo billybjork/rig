@@ -6,8 +6,17 @@ defmodule Rigd.FleetExeTest do
   @moduletag :tmp_dir
   @moduletag :capture_log
 
-  @keys %{"proj" => "0123456789abcdef", "proj-plt" => "1111111111111111"}
-  @newer %{"proj" => "fedcba9876543210", "proj-plt" => "2222222222222222"}
+  # What the golden holds includes how it was made (`Exe.format/0`).
+  @keys %{
+    "proj" => "0123456789abcdef",
+    "proj-plt" => "1111111111111111",
+    "golden" => Exe.format()
+  }
+  @newer %{
+    "proj" => "fedcba9876543210",
+    "proj-plt" => "2222222222222222",
+    "golden" => Exe.format()
+  }
 
   # `ssh` as Fleet calls it: `exe.dev <command>` against VMs that are
   # directories under $FAKE_EXE/vms (files `status`, `comment`, `created`),
@@ -274,6 +283,20 @@ defmodule Rigd.FleetExeTest do
     a = lease(opts)
     assert %{"granted" => _} = recv(a)
     assert calls(root) =~ "exe.dev cp #{name} rig-part-"
+  end
+
+  test "a golden made the old way (no sync before its pause) is remade, its disk synced before the pause",
+       %{root: root, opts: opts} do
+    golden(root, Map.delete(@keys, "golden"))
+    start(opts)
+    until(fn -> Exe.status().golden not in [nil, "rig-golden"] end)
+    until(&ready?/0)
+    name = Exe.status().golden
+    calls = calls(root)
+    [_, after_sync] = String.split(calls, "#{name}.exe.xyz sync\n", parts: 2)
+    assert after_sync =~ "exe.dev pause #{name}"
+    refute String.split(calls, "#{name}.exe.xyz sync") |> hd() =~ "exe.dev pause #{name}"
+    assert File.read!(Path.join([root, "vms", name, "comment"])) =~ "golden #{Exe.format()}"
   end
 
   test "a seed without a golden comment is leased from, then refreshed", %{root: root, opts: opts} do
