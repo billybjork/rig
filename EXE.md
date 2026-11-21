@@ -215,6 +215,11 @@ seed `rig-golden`, took 7 min (soco's PLT rebuilt in 356 s) and made
 `rig-golden-1120-235625-94ffec`; a heaters gate through a trial `Fleet`
 on it was green in 534 s (static 172, test-1 524, test-2 423, test-3
 398), its four VMs removed after.
+Live 2026-11-20 (rig 3a663fa: the first live lease crashed on
+`:crypto`, which rigd's release lacks, and took the whole Fleet down for
+25 min; a test now holds rigd to its release's applications). heaters
+gates on it since #871 (green in 559 s on four copies). soco follows
+after a few green heaters ships.
 
 ### 4. The workbench
 

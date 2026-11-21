@@ -217,6 +217,7 @@ step 2 done (`gate/lib/gate/exe.ex`: a host named `<vm>.exe.xyz` runs its
 parts over `ssh`; `rig-golden` set up and warm for both projects through
 `gate golden`); step 3 built (`Rigd.Fleet.Exe`: a fresh copy of the
 golden per part, `"pool": "exe"`; the golden refreshed on a key change),
-a heaters gate green on it in 534 s; heaters moves first, then soco.
+live: heaters gates on it since #871 (559 s; the Sprite pool took 11 to
+14 min); soco next, after a few green heaters ships.
 
 Then agents on Sprites (step 5).
