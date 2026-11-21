@@ -283,7 +283,12 @@ paused straight after `gate golden`, and a `cp` copies the disk, not the
 page cache, so 17 of heaters' test beams were empty on every copy and
 each heaters test part red since (check-fast at 04:45 and 04:53).
 `Fleet` now syncs before the pause, and a golden's keys include `golden
-<format>` so the unsynced one was remade.
+<format>` so the unsynced one was remade. A remade golden is a copy of
+the old one, so it kept the empty files; mix does not rebuild a module
+whose .beam alone is missing, so a part now drops the build of any app
+holding an empty .beam before setup (`sprite/job.sh`; heaters' test
+build recompiles in about 100 s), and format 3 remade the golden on
+that.
 
 ### 5. Later (not urgent, Billy)
 

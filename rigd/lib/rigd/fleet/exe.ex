@@ -51,8 +51,10 @@ defmodule Rigd.Fleet.Exe do
 
   # How a golden is made, as a key the golden must hold (16 hex digits, as
   # `Golden.comment_keys/1` reads them): 2 since its disk is synced before
-  # the pause.
-  @format "0000000000000002"
+  # the pause; 3 since a part drops an app build holding an empty .beam
+  # (`sprite/job.sh`), so the copies of 2, made from the unsynced golden,
+  # are remade whole.
+  @format "0000000000000003"
 
   @every 10 * 60 * 1000
   @drain_ms 60_000

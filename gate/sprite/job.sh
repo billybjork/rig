@@ -164,6 +164,14 @@ if [ -e "$unfinished" ]; then
   say "the last part here did not finish; dropping the app's build"
   rm -rf "$repo"/_build/*/lib/"$NAME"
 fi
+# A host whose page cache never reached its disk (an exe.dev golden paused
+# unsynced, 2026-11-21) leaves empty .beam files its manifest calls
+# current ("corrupt file header"). Mix does not rebuild a module whose
+# .beam alone is missing, so the build of each app holding one goes.
+for ebin in $(find "$repo"/_build -name '*.beam' -size 0 -exec dirname {} \; 2>/dev/null | sort -u); do
+  say "empty .beam files in ${ebin#"$repo"/}; dropping that build"
+  rm -rf "$(dirname "$ebin")"
+done
 bash "$SETUP" || { say "setup failed ($SETUP)"; finish 92; }
 lap "setup"
 

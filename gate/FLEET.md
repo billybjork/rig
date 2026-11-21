@@ -209,7 +209,9 @@ it as `"pool": "exe"`: each part's lease (`Gate.Lease`) says `"pool":
   cache: the unsynced golden of 2026-11-21 02:38 gave every copy 17
   empty heaters beams), pauses it and writes its golden comment: the
   swap. The keys include `golden <format>`, how a golden is made, so a
-  change to that remakes it. The
+  change to that remakes it. A part drops the build of any app holding
+  an empty .beam before its setup (`sprite/job.sh`), which repaired the
+  copies. The
   old golden goes once no copy of it is under way. Leases go on from the
   old one meanwhile. A red `main` keeps the old golden and tries again in
   30 minutes. With no golden comment anywhere, the VM named `rig-golden`

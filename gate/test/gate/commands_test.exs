@@ -50,7 +50,7 @@ defmodule Gate.CommandsTest do
   end
 
   describe "run on exe.dev" do
-    @describetag gate: %{"pool" => "exe"}
+    @describetag gate: %{"pool" => "exe", "keep" => ["_build"]}
 
     setup do
       on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
@@ -85,6 +85,28 @@ defmodule Gate.CommandsTest do
 
       assert status == 3
       assert err =~ "exit 3 in"
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    test "an app build holding an empty .beam (an unsynced host's) is dropped before setup",
+         env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-1))
+      {0, _, err} = Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
+      assert err =~ "exit 0"
+
+      ebin = Path.join(env.root, "gate-1/home/proj/_build/test/lib/proj/ebin")
+      deps = Path.join(env.root, "gate-1/home/proj/_build/test/lib/dep/ebin")
+      File.mkdir_p!(ebin)
+      File.mkdir_p!(deps)
+      File.write!(Path.join(ebin, "Elixir.Good.beam"), "FOR1")
+      File.touch!(Path.join(ebin, "Elixir.Empty.beam"))
+      File.write!(Path.join(deps, "Elixir.Dep.beam"), "FOR1")
+
+      {status, out, err} = Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
+      assert status == 0, err
+      assert out =~ "empty .beam files in _build/test/lib/proj/ebin; dropping that build"
+      refute File.exists?(Path.dirname(ebin))
+      assert File.exists?(Path.join(deps, "Elixir.Dep.beam"))
       Gate.FakeFleet.stop(fleet)
     end
 
