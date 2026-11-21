@@ -1,8 +1,8 @@
 #!/bin/bash
-# On a Sprite: `bash -c "<this file>" poll.sh <id> <offset>`
-# (lib/gate/sprite.ex). Prints the part's state as header lines (phase, rc,
-# life, whether its job and keeper run, the log's size), then
-# "gate-poll: log" and the log's bytes from <offset> to that size.
+# On an exe.dev VM, as `gate`: `bash -c "<this file>" poll.sh <id> <offset>`
+# (lib/gate/exe.ex). Prints the part's state as header lines (phase, rc,
+# life, whether its job runs, the log's size), then "gate-poll: log" and
+# the log's bytes from <offset> to that size.
 id=${1:?usage: poll.sh <id> <offset>} offset=${2:-0}
 d=~/parts/$id
 [ -d "$d" ] || { echo "gate-poll: gone"; exit 0; }
@@ -11,7 +11,6 @@ up() { kill -0 "$(cat "$1" 2>/dev/null)" 2>/dev/null && echo up || echo down; }
 # then exits, so one seen down has its rc there), and the log's size last,
 # so a status comes with every line the job wrote before it.
 job=$(up "$d/job.pid")
-keeper=$(up "$d/keeper.pid")
 rc=$(cat "$d/rc" 2>/dev/null)
 phase=$(cut -d' ' -f1 "$d/phase" 2>/dev/null)
 if [ -r /proc/sys/kernel/random/boot_id ]; then
@@ -25,7 +24,6 @@ echo "phase $phase"
 echo "rc $rc"
 echo "life $life"
 echo "job $job"
-echo "keeper $keeper"
 echo "size $size"
 echo "gate-poll: log"
 [ "$size" -le "$offset" ] || tail -c +"$((offset + 1))" "$d/log" | head -c "$((size - offset))"

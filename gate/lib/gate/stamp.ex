@@ -1,6 +1,6 @@
 defmodule Gate.Stamp do
   @moduledoc """
-  Hashes of files at a commit: the provision stamp a Sprite must carry
+  Hashes of files at a commit: the provision stamp a VM must carry
   (the project's `stamp` files, in order: its toolchain pins and its
   provision script; with `image`, its pin files and rig's image script),
   and each warm cache's key (its `key` files, the stamp, so a toolchain
@@ -13,7 +13,7 @@ defmodule Gate.Stamp do
 
   @doc "rig's one gate image, the provision script of a project with `image` (`$GATE_IMAGE` in tests)."
   def image,
-    do: System.get_env("GATE_IMAGE") || Path.join(Gate.Sprite.root(), "image/provision.sh")
+    do: System.get_env("GATE_IMAGE") || Path.join(Gate.root(), "image/provision.sh")
 
   def warm_key(config, sha, stamp, warm),
     do: hash(config, sha, warm["key"], [stamp, 0, warm["command"] || ""])

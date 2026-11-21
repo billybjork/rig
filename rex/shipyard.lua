@@ -1,16 +1,15 @@
--- Shipyard and the Sprites in Rex: the ship workers, each
--- project's queue and gate pool, and a console on any Sprite. Find them in
--- the command palette under "Shipyard" and "Sprites".
+-- Shipyard in Rex: the ship workers and each project's queue and numbers.
+-- Find them in the command palette under "Shipyard".
 --
 -- The projects are shipyard's own list, ~/.config/shipyard/projects (one
--- checkout per line), and the Sprites are `sprite ls`'s, both read when the
--- config loads: run `rex config reload` after adding either.
+-- checkout per line), read when the config loads: run `rex config reload`
+-- after adding one.
 
 local terminal = "com.superlogical.terminal"
 local home = os.getenv("HOME")
 local shipyard = (os.getenv("SHIPYARD") or (home .. "/dev/rig/shipyard")) .. "/bin/shipyard"
 -- A pane an action opens gets the Rex server's environment, which has no
--- mix or sprite on its PATH, so its command runs in an interactive login
+-- mix on its PATH, so its command runs in an interactive login
 -- zsh, which sets them up (~/.zshrc).
 local function login(command)
   local wrapped = { "/bin/zsh", "-lic", 'exec "$@"', "zsh" }
@@ -37,12 +36,6 @@ local function pane(ctx, label, dir, command)
   }
   if s == nil then error(err, 0) end
   return s
-end
-
-local function exists(path)
-  local f = io.open(path, "r")
-  if f then f:close() end
-  return f ~= nil
 end
 
 -- The workers run in background terminals in the session Shipyard (blocks
@@ -91,7 +84,7 @@ rex.action{
   end,
 }
 
--- Each project shipyard knows: its queue, its numbers, and its gate pool.
+-- Each project shipyard knows: its queue and its numbers.
 local list = io.open(home .. "/.config/shipyard/projects", "r")
 for line in (list and list:read("*a") or ""):gmatch("[^\n]+") do
   local dir = line:gsub("^~", home):gsub("%s+$", "")
@@ -118,50 +111,6 @@ for line in (list and list:read("*a") or ""):gmatch("[^\n]+") do
         return pane(ctx, name .. " numbers", dir, { shipyard, "list", dir, "--summary" })
       end,
     }
-
-    for _, script in ipairs({ "tooling/gate-pool.sh", "scripts/gate-pool.sh" }) do
-      if exists(dir .. "/" .. script) then
-        rex.action{
-          name = "sprites_pool_" .. key,
-          title = "Sprites: Gate Pool (" .. name .. ")",
-          description = "Each gate Sprite's provision stamp and checkpoint, against this checkout's.",
-          category = "Sprites",
-          keywords = "sprite pool gate status stamp checkpoint " .. name,
-          run = function(ctx) return pane(ctx, name .. " pool", dir, { "bash", script, "status" }) end,
-        }
-        break
-      end
-    end
   end
 end
 if list then list:close() end
-
--- A console on each Sprite, beside the focused pane. Ctrl+\ detaches and
--- leaves its shell running on the Sprite (`sprite sessions`).
-local sprites = rex.exec({ "sh", "-lc", "sprite ls" }, { timeout = 15 })
-for name in ((sprites and sprites.ok) and sprites.stdout or ""):gmatch("[^\n]+") do
-  name = name:gsub("%s+$", "")
-  if name:match("^[%w-]+$") then
-    rex.action{
-      name = "sprites_console_" .. name:gsub("[^%w]", "_"),
-      title = "Sprites: Console on " .. name,
-      description = "An interactive shell on " .. name .. " in a pane beside this one.",
-      category = "Sprites",
-      keywords = "sprite console shell ssh remote " .. name,
-      run = function(ctx)
-        local s, err = rex.session.new_split{
-          anchor_id = ctx.block_id,
-          direction = "horizontal",
-          side = "after",
-          focus = true,
-          layout = rex.layout.block{
-            flavor = terminal .. ".shell",
-            options = { cwd = home, command = login({ "sprite", "console", "-s", name }) },
-          },
-        }
-        if s == nil then error(err, 0) end
-        return s
-      end,
-    }
-  end
-end

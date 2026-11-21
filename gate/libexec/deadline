@@ -2,12 +2,12 @@
 # deadline <seconds> [--in <file>] <command...>
 #
 # Runs the command for at most <seconds>; past that it exits 142, as an
-# alarm would. The sprite CLI survives SIGALRM and SIGTERM for 5 s and more,
-# so the limit is kept from out here: the command runs in its own process
-# group, which gets a TERM and, $GATE_KILL_GRACE seconds later (5), a KILL.
-# A TERM or INT to this process stops the group the same way (143, 130), so
-# killing the caller's job ends the exec and anything it started (`script`
-# and the CLI under it). So does the caller's death (129): a caller killed
+# alarm would. A client may ignore SIGALRM and SIGTERM (Fly's sprite CLI
+# did, for 5 s and more), so the limit is kept from out here: the command
+# runs in its own process group, which gets a TERM and, $GATE_KILL_GRACE
+# seconds later (5), a KILL. A TERM or INT to this process stops the group
+# the same way (143, 130), so killing the caller's job ends the command and
+# anything it started. So does the caller's death (129): a caller killed
 # outright, as rigd is on a restart, would otherwise leave the command
 # running with no one to read it (the gate golden runs and their uploads,
 # 2026-10-29). Its stdin is <file>, or /dev/null, so a command never reads

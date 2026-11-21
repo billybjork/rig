@@ -1,11 +1,10 @@
 defmodule Gate.Exe do
   @moduledoc """
-  The exe.dev host backend (rig's EXE.md, step 2): the same stage, launch,
-  poll and end as `Gate.Sprite`, each one plain `ssh <vm>.exe.xyz` call
-  under `libexec/deadline`, and the same Sprite-side scripts (`sprite/`)
-  but for the launch (`exe/launch.sh`), which needs no keeper: an exe.dev
-  VM runs on with nobody connected, so the job is started detached and the
-  call returns.
+  Where a part runs: an exe.dev VM, `<vm>.exe.xyz` (rig's EXE.md). Its
+  stage, launch, poll and end are each one plain `ssh` call under
+  `libexec/deadline`, which runs a host-side script (`exe/`). None streams
+  a part's output: the job is started detached (`exe/launch.sh`), the VM
+  runs on with nobody connected, and its log is read in short polls.
 
   exe's SSH logs every user in as the image's default user (root), and a
   part runs as `gate` in a login shell (`su - gate`), whose profile puts
@@ -17,19 +16,20 @@ defmodule Gate.Exe do
   `$GATE_SSH` names the client (`ssh`).
   """
 
-  alias Gate.Sprite
-
   @suffix ".exe.xyz"
 
   @doc "Whether `host` is an exe.dev VM: its SSH name, `<vm>.exe.xyz`."
   def host?(host), do: String.ends_with?(host, @suffix)
+
+  @doc "The host-side scripts a part's tar carries: `{source under gate/, name in the tar}`."
+  def files, do: [{"exe/job.sh", "job.sh"}, {"exe/launch.sh", "launch.sh"}]
 
   defp ssh, do: System.get_env("GATE_SSH", "ssh")
 
   # Every VM presents exe's one host key, pinned in `exe/known_hosts`, so a
   # copy made a second ago is known and no other key is taken.
   defp ssh_opts do
-    known = Path.join(Sprite.root(), "exe/known_hosts")
+    known = Path.join(Gate.root(), "exe/known_hosts")
 
     ~w(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=3) ++
       ["-o", "UserKnownHostsFile=#{known}", "-o", "StrictHostKeyChecking=yes"]
@@ -51,80 +51,158 @@ defmodule Gate.Exe do
         else: as_gate
 
     input = if opts[:in], do: ["--in", opts[:in]], else: []
-    deadline = Path.join(Sprite.root(), "libexec/deadline")
+    deadline = Path.join(Gate.root(), "libexec/deadline")
 
     System.cmd(deadline, [to_string(secs)] ++ input ++ [ssh() | ssh_opts()] ++ [host, remote],
       stderr_to_stdout: true
     )
   end
 
-  defp boot, do: File.read!(Path.join(Sprite.root(), "exe/base.sh"))
+  defp boot, do: File.read!(Path.join(Gate.root(), "exe/base.sh"))
 
   defp script(host, name, args, secs, opts \\ []) do
-    text = File.read!(Path.join(Sprite.root(), "sprite/#{name}.sh"))
+    text = File.read!(Path.join(Gate.root(), "exe/#{name}.sh"))
     call(host, text, "#{name}.sh", args, secs, opts)
   end
 
-  @doc "As `Gate.Sprite.holds/3`."
+  @doc """
+  What the project's tree on `host` holds: `{:ok, tip, have}`, `tip` the
+  last commit a bundle brought there (`refs/laptop/gate`) and `have` the
+  first of `candidates` it has, each nil when none; `{:error, why}` when
+  the VM could not be asked.
+
+  `candidates` (HEAD's first parents, newest first) are what a bundle can
+  stop at when this checkout lacks `tip`: the golden's tree was fetched by
+  another checkout, and sending the whole history then (soco's is about
+  300 MB) outlasted the upload's limit on a busy uplink (2026-11-16).
+  """
   def holds(host, name, candidates) do
-    case call(host, Sprite.holds_script(), "holds", [name | candidates], 60) do
-      {out, 0} -> Sprite.parse_holds(out)
-      {out, status} -> {:error, "exit #{status}: #{Sprite.last_line(out)}"}
+    case call(host, holds_script(), "holds", [name | candidates], 60) do
+      {out, 0} -> parse_holds(out)
+      {out, status} -> {:error, "exit #{status}: #{Gate.last_line(out)}"}
     end
   end
 
-  @doc "As `Gate.Sprite.stage/4`."
+  @doc false
+  def holds_script do
+    ~S"""
+    cd ~/"$1" 2>/dev/null || { echo tip; echo have; exit 0; }
+    shift
+    echo "tip $(git rev-parse -q --verify refs/laptop/gate)"
+    for c in "$@"; do
+      git cat-file -e "$c^{commit}" 2>/dev/null && { echo "have $c"; exit 0; }
+    done
+    echo have
+    """
+  end
+
+  @doc false
+  def parse_holds(out) do
+    found =
+      for line <- String.split(out, "\n", trim: true),
+          [key, sha] <- [String.split(String.trim(line), " ", parts: 2)],
+          key in ~w(tip have),
+          sha =~ ~r/\A[0-9a-f]{40}\z/,
+          into: %{},
+          do: {key, sha}
+
+    if out =~ ~r/^have/m,
+      do: {:ok, found["tip"], found["have"]},
+      else: {:error, "an unreadable answer: #{Gate.last_line(out)}"}
+  end
+
+  @doc """
+  Uploads the part's tar to `~/parts/<id>`, ending what an earlier part
+  left. An upload that outlasts `secs` is `{:error, {:timeout, why}}`: the
+  laptop's link was too slow, which says nothing of the VM.
+  """
   def stage(host, id, tar, secs) do
     case script(host, "stage", [id], secs, in: tar, boot: true) do
       {out, 0} ->
-        if out =~ "gate-staged", do: :ok, else: {:error, Sprite.last_line(out)}
+        if out =~ "gate-staged", do: :ok, else: {:error, Gate.last_line(out)}
 
       {out, 142} ->
-        {:error, {:timeout, "the upload outlasted #{secs} s: #{Sprite.last_line(out)}"}}
+        {:error, {:timeout, "the upload outlasted #{secs} s: #{Gate.last_line(out)}"}}
 
       {out, status} ->
-        {:error, "the upload failed (exit #{status}): #{Sprite.last_line(out)}"}
+        {:error, "the upload failed (exit #{status}): #{Gate.last_line(out)}"}
     end
   end
 
   @doc """
   Starts the staged part detached (`exe/launch.sh`, staged as the part's
-  `launch.sh`): `{:ok, life}`, the VM's life as the part began. There is no
-  keeper, so `keep` has nothing to start.
+  `launch.sh`): `{:ok, life}`, the VM's life as the part began.
   """
-  def launch(_host, _id, "keep", _secs), do: {:ok, nil}
-
-  def launch(host, id, _mode, secs) do
+  def launch(host, id, secs) do
     launch = ~S|exec bash ~/parts/"$1"/launch.sh "$1"|
 
     case call(host, launch, "launch", [id], secs, boot: true) do
       {out, 0} ->
-        case Sprite.launched(out) do
-          nil -> {:error, "the launch said no life: #{Sprite.last_line(out)}"}
+        case launched(out) do
+          nil -> {:error, "the launch said no life: #{Gate.last_line(out)}"}
           life -> {:ok, life}
         end
 
       {out, status} ->
-        {:error, "the launch failed (exit #{status}): #{Sprite.last_line(out)}"}
+        {:error, "the launch failed (exit #{status}): #{Gate.last_line(out)}"}
     end
   end
 
-  @doc "As `Gate.Sprite.poll/4`, with no keeper to report."
+  @doc "The life in a whole `gate-launched <life>` line of the launch's output, else nil."
+  def launched(out) do
+    case Regex.run(~r/^gate-launched (\S+)$/m, out) do
+      [_, life] -> life
+      nil -> nil
+    end
+  end
+
+  @doc """
+  The part's state and its log from byte `offset`: `{:ok, state, bytes}`
+  with `state` holding `phase`, `rc`, `life`, `job` (`up` or `down`) and
+  `size`, or `{:ok, :gone, ""}` when the VM has no such part, or
+  `{:error, why}`.
+  """
   def poll(host, id, offset, secs) do
     case script(host, "poll", [id, to_string(offset)], secs) do
-      {out, 0} ->
-        case Sprite.parse_poll(out) do
-          {:ok, state, bytes} when is_map(state) -> {:ok, Map.delete(state, "keeper"), bytes}
-          other -> other
-        end
-
-      {out, status} ->
-        {:error, "exit #{status}: #{Sprite.last_line(out)}"}
+      {out, 0} -> parse_poll(out)
+      {out, status} -> {:error, "exit #{status}: #{Gate.last_line(out)}"}
     end
   end
 
-  @doc "As `Gate.Sprite.kill/2`."
-  def kill(host, id), do: call(host, Sprite.kill_script(), "kill", [id], 30)
+  @doc false
+  def parse_poll(out) do
+    case String.split(out, "gate-poll: log\n", parts: 2) do
+      [head, bytes] ->
+        state =
+          for line <- String.split(head, "\n"),
+              [key, value] <- [String.split(line, " ", parts: 2)],
+              key in ~w(phase rc life job size),
+              into: %{},
+              do: {key, String.trim(value)}
+
+        case Integer.parse(state["size"] || "") do
+          {size, ""} -> {:ok, Map.put(state, "size", size), bytes}
+          _ -> {:error, "an unreadable poll: #{Gate.last_line(head)}"}
+        end
+
+      [_] ->
+        if out =~ "gate-poll: gone",
+          do: {:ok, :gone, ""},
+          else: {:error, "an unreadable poll: #{Gate.last_line(out)}"}
+    end
+  end
+
+  @doc "Ends the part's job: TERM, then KILL 3 s later."
+  def kill(host, id), do: call(host, kill_script(), "kill", [id], 30)
+
+  defp kill_script do
+    ~S"""
+    p=$(cat ~/parts/"$1"/job.pid 2>/dev/null) || exit 0
+    kill -TERM -- "-$p" 2>/dev/null && sleep 3
+    kill -KILL -- "-$p" 2>/dev/null
+    true
+    """
+  end
 
   @doc "A POSIX shell word for `value`."
   def q(value), do: "'" <> String.replace(to_string(value), "'", ~S('\'')) <> "'"

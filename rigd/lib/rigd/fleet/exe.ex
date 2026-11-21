@@ -52,7 +52,7 @@ defmodule Rigd.Fleet.Exe do
   # How a golden is made, as a key the golden must hold (16 hex digits, as
   # `Golden.comment_keys/1` reads them): 2 since its disk is synced before
   # the pause; 3 since a part drops an app build holding an empty .beam
-  # (`sprite/job.sh`); 4 since `gate golden` builds each warm cache even
+  # (`gate/exe/job.sh`); 4 since `gate golden` builds each warm cache even
   # when its key is current, which compiles the app build 3 dropped.
   @format "0000000000000004"
 

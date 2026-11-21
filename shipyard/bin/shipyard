@@ -86,10 +86,10 @@ start() {
     *) usage ;;
   esac
 
-  # The worker gates on the project's Sprite pool through this machine's
-  # `sprite` login; a machine without it leaves the PR queued.
-  if ! command -v sprite >/dev/null; then
-    say "no sprite CLI on this machine; the PR waits in the queue for the laptop's worker"
+  # The worker gates on exe.dev VMs that this machine's rigd leases (its
+  # Fleet, rig's gate/README.md); a machine without it leaves the PR queued.
+  if [ ! -S "${GATE_FLEET_SOCKET:-$HOME/Library/Caches/rigd/fleet.sock}" ]; then
+    say "no rigd Fleet socket on this machine; the PR waits in the queue for the laptop's worker"
     exit 0
   fi
 

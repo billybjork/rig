@@ -15,9 +15,6 @@ defmodule Gate.CLI do
           ["run" | rest] ->
             Gate.Run.main(config, rest)
 
-          ["pool" | rest] ->
-            Gate.Pool.main(config, rest)
-
           ["times"] ->
             Gate.Times.main(config, [])
 
@@ -36,12 +33,12 @@ defmodule Gate.CLI do
 
             0
 
-          ["golden", sprite] ->
-            Gate.Golden.main(config, sprite)
+          ["golden", host] ->
+            Gate.Golden.main(config, host)
 
           _ ->
             raise Gate.Error,
-                  "usage: gate check [tier] | run <cmd...> | pool ... | golden <host> | times | stamp [rev] | keys <rev>"
+                  "usage: gate check [tier] | run <cmd...> | golden <vm> | times | stamp [rev] | keys <rev>"
         end
       rescue
         e in Gate.Error ->

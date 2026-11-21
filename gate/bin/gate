@@ -4,53 +4,25 @@
 #
 #   gate check [tier]           the split gate on HEAD, a fresh exe.dev VM per part
 #   gate run <command...>       the workbench: a command on the working tree, on its own exe.dev VM
-#   gate pool status|provision|rebuild|exec|warm   the pool's Sprites
 #   gate keys <rev>             what a golden VM made at <rev> holds: the stamp, each warm cache's key
-#   gate golden <host>          set one Sprite or exe.dev VM (<vm>.exe.xyz) up and warm its caches
+#   gate golden <vm>            set a golden exe.dev VM (<vm>.exe.xyz) up and warm its caches
 #   gate times                  rewrite the suite's partition weights
 #   gate stamp [rev]            HEAD's (or rev's) provision stamp
-#   gate lock ...               the machine's gate lock (libexec/lock)
 #   gate self-check             the runner's own gate
 #
-# A gate on a project's own pool and every pool command but status hold the
-# pool's lock, and a run its dev Sprite's (the protocol of libexec/lock, on
-# files under the project's `locks`), so two never share a Sprite. A gate or
-# a run on exe.dev holds none: each part, and each run, leases its own VM.
+# Nothing here takes a lock: each part, and each run, leases its own VM
+# from rigd's Fleet, and a ship's gate leases ahead of a session's.
 set -euo pipefail
 gate=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 case "${1:-}" in
-  lock) shift; exec "$gate/libexec/lock" "$@" ;;
   self-check) cd "$gate" && unset MIX_ENV && exec mix check ;;
-  "" | -h | --help) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
+  "" | -h | --help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
 esac
 
 top=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "gate: run it in a project checkout" >&2; exit 2; }
 config=$top/.gate.json
 [ -f "$config" ] || { echo "gate: $config is missing" >&2; exit 2; }
-
-# Re-runs this command under lock file $1 (under the project's `locks`),
-# marked held by variable $2 so the re-run goes on.
-hold() {
-  local lock=$1 held=$2 locks
-  shift 2
-  [ "${!held:-}" != 1 ] || return 0
-  locks=$(jq -er .locks "$config")
-  locks=${locks/#\~/$HOME}
-  mkdir -p "$locks"
-  exec env DEV_GATE_LOCK="$locks/$lock" DEV_GATE_LOCK_HELD= "$held=1" "$gate/libexec/lock" "$0" "$@"
-}
-case "${1:-} ${2:-}" in
-  "pool status" | "pool " | "times "* | "stamp "* | "keys "*) ;;
-  # On exe.dev each part leases its own VM, and a ship's gate leases ahead
-  # of a session's (rigd's Fleet), so it holds no lock: a lock held a ship
-  # worker for 19 minutes (2026-11-16). A "fleet" gate (the retired shared
-  # pool) takes none either; `gate check` refuses it.
-  "check "*) case "$(jq -r '.pool // empty | strings' "$config")" in fleet | exe) ;; *) hold pool.lock GATE_POOL_HELD "$@" ;; esac ;;
-  "pool "*) hold pool.lock GATE_POOL_HELD "$@" ;;
-  "run "*) [ "$(jq -r '.pool // empty | strings' "$config")" = exe ] || hold "${GATE_DEV_SPRITE:-$(jq -er '.dev[0]' "$config")}.lock" GATE_DEV_HELD "$@" ;;
-esac
-unset DEV_GATE_LOCK
 
 # rig's toolchain (gate/.tool-versions), not the project's: the Elixir
 # side runs from here, and $GATE_CWD names the checkout.
@@ -59,9 +31,10 @@ unset MIX_ENV
 mix compile --no-deps-check >&2
 
 # A gate stopped from outside (a closed terminal, the worker's timeout)
-# ends the parts it launched, which would otherwise run on and share their
-# Sprites with the pool's next user. The runner lists each part it launches
-# in $GATE_PARTS_FILE as "<sprite> <id>".
+# ends the parts it launched, which would otherwise run on until Fleet
+# removes their VMs. The runner lists each part it launches in
+# $GATE_PARTS_FILE as "<vm> <id>"; an id is word characters, dots and
+# dashes, so it needs no quoting.
 parts=$(mktemp "${TMPDIR:-/tmp}/gate-parts.XXXXXX")
 GATE_CWD=$top GATE_PARTS_FILE=$parts mix run --no-compile --no-deps-check --no-start \
   -e 'Gate.CLI.main(System.argv())' -- "$@" &
@@ -70,19 +43,12 @@ stop() {
   trap '' TERM INT HUP
   kill -TERM "$pid" 2>/dev/null
   wait "$pid" 2>/dev/null
-  local end='for f in ~/parts/"$1"/job.pid ~/parts/"$1"/keeper.pid; do
-    p=$(cat "$f" 2>/dev/null) && kill -KILL -- "-$p" 2>/dev/null
-  done; true'
-  while read -r sprite id; do
-    echo "gate: ending $id on $sprite" >&2
-    case "$sprite" in
-      # An exe.dev VM (lib/gate/exe.ex): its parts are gate's, and an id is
-      # word characters, dots and dashes, so it needs no quoting.
-      *.exe.xyz)
-        "$gate/libexec/deadline" 30 --in <(printf '%s\n' "$end") "${GATE_SSH:-ssh}" -o BatchMode=yes \
-          -o ConnectTimeout=20 -o UserKnownHostsFile="$gate/exe/known_hosts" -o StrictHostKeyChecking=yes "$sprite" "su - gate -c 'bash -s -- $id'" ;;
-      *) "$gate/libexec/deadline" 30 "${GATE_SPRITE_CLI:-sprite}" -s "$sprite" exec -- bash -c "$end" stop "$id" ;;
-    esac >/dev/null 2>&1 &
+  local end='p=$(cat ~/parts/"$1"/job.pid 2>/dev/null) && kill -KILL -- "-$p" 2>/dev/null; true'
+  while read -r vm id; do
+    echo "gate: ending $id on $vm" >&2
+    "$gate/libexec/deadline" 30 --in <(printf '%s\n' "$end") "${GATE_SSH:-ssh}" -o BatchMode=yes \
+      -o ConnectTimeout=20 -o UserKnownHostsFile="$gate/exe/known_hosts" -o StrictHostKeyChecking=yes \
+      "$vm" "su - gate -c 'bash -s -- $id'" >/dev/null 2>&1 &
   done <"$parts"
   wait
   rm -f "$parts"

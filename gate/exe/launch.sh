@@ -2,8 +2,8 @@
 # On an exe.dev VM, as `gate`: `bash ~/parts/<id>/launch.sh <id>`
 # (lib/gate/exe.ex). Starts the part's job.sh in a session of its own,
 # writing ~/parts/<id>/log, prints "gate-launched <life>" and returns. The
-# VM runs on with nobody connected, so unlike a Sprite's launch.sh nothing
-# stays behind to keep it awake.
+# VM runs on with nobody connected, so nothing stays behind to keep it
+# awake.
 set -uo pipefail
 id=${1:?usage: launch.sh <id>}
 d=~/parts/$id

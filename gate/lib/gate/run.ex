@@ -5,13 +5,10 @@ defmodule Gate.Run do
   against HEAD, staged or not, and the untracked files Git does not
   ignore. gitleaks scans those first, and no secret goes aboard.
 
-  On exe.dev (`"pool": "exe"`) each run leases its own VM from rigd's
-  `Fleet`, a fresh copy of the golden (4 vCPU / 8 GB, behind every ship's
-  gate), readied as a gate's part is, and removed as the run ends: runs
-  share no Postgres, ports or locks. A VM that fails reruns the command
-  once on another. On a project still on Sprites, it runs on a dev Sprite
-  (`$GATE_DEV_SPRITE`, else `.gate.json`'s first `dev`), created on first
-  use.
+  Each run leases its own exe.dev VM from rigd's `Fleet`, a fresh copy of
+  the golden (4 vCPU / 8 GB, behind every ship's gate), readied as a
+  gate's part is, and removed as the run ends: runs share no Postgres,
+  ports or locks. A VM that fails reruns the command once on another.
 
   Its output streams here and goes to `<logs>/gate-run-*.log`. The exit
   status is the command's, or 125 when the command could not run there:
@@ -20,14 +17,12 @@ defmodule Gate.Run do
   The last line says which. Rex shows it as the record `gate-run`.
   """
 
-  alias Gate.{Check, Engine, Stamp, Status}
+  alias Gate.{Check, Config, Engine, Stamp, Status}
 
   def main(_config, []), do: raise(Gate.Error, "usage: gate run <command...>")
 
   def main(config, argv) do
-    exe = config.pool == "exe"
-    host = if exe, do: :lease, else: dev_sprite(config)
-    where = if exe, do: "exe.dev", else: host
+    Config.exe!(config)
     command = Enum.join(argv, " ")
     say = &IO.puts(:stderr, "gate run: #{&1}")
     t0 = System.monotonic_time(:second)
@@ -38,21 +33,21 @@ defmodule Gate.Run do
       125
     end
 
-    Status.report(:working, "gate-run", "preparing on #{where}", command)
+    Status.report(:working, "gate-run", "preparing on exe.dev", command)
     sha = Check.git!(config, ["rev-parse", "HEAD"])
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> Check.short(sha)
     work = Path.join(System.tmp_dir!(), "gate-run-#{run}-#{System.unique_integer([:positive])}")
     overlay = Path.join(work, "overlay")
 
     try do
-      with :ok <- ensure(host),
+      with :ok <- fleet(),
            {:ok, changed} <- overlay(config, overlay),
            :ok <- scan(overlay) do
-        say.("#{command} on #{where}: #{Check.short(sha)} with #{changed} uncommitted path(s)")
+        say.("#{command} on exe.dev: #{Check.short(sha)} with #{changed} uncommitted path(s)")
         limit = String.to_integer(System.get_env("GATE_RUN_TIMEOUT", "3600"))
         limits = Map.put(config.limits, "run", limit)
         # Its output is read as it comes, so it is polled more often than a gate's part.
-        limits = if exe, do: Map.put(limits, "poll", min(limits["poll"], 3)), else: limits
+        limits = Map.put(limits, "poll", min(limits["poll"], 3))
         config = %{config | limits: limits}
 
         ctx = %Engine{
@@ -69,7 +64,7 @@ defmodule Gate.Run do
         }
 
         job = %Engine.Job{name: "run", argv: argv, overlay: overlay}
-        [r] = Engine.run(ctx, [{job, host}])
+        [r] = Engine.run(ctx, [{job, :lease}])
         log = Path.join(config.logs, "gate-run-#{Path.basename(r.log)}")
         File.rename!(r.log, log)
         secs = System.monotonic_time(:second) - t0
@@ -77,14 +72,14 @@ defmodule Gate.Run do
         case r.result do
           :overlay ->
             cant_run.(
-              "the working tree could not be laid over #{Check.short(sha)} on #{r.sprite}; log #{log}"
+              "the working tree could not be laid over #{Check.short(sha)} on #{r.host}; log #{log}"
             )
 
           :sprite_failed ->
-            cant_run.("#{r.sprite} failed after #{secs} s: #{r.why}; log #{log}")
+            cant_run.("#{r.host} failed after #{secs} s: #{r.why}; log #{log}")
 
           _ ->
-            say.("exit #{r.rc} in #{secs} s on #{r.sprite}#{if r.rc != 0, do: "; log #{log}"}")
+            say.("exit #{r.rc} in #{secs} s on #{r.host}#{if r.rc != 0, do: "; log #{log}"}")
             r.rc
         end
       else
@@ -95,29 +90,11 @@ defmodule Gate.Run do
     end
   end
 
-  def dev_sprite(config) do
-    System.get_env("GATE_DEV_SPRITE") || List.first(config.dev) ||
-      raise Gate.Error, ".gate.json names no dev Sprite"
-  end
-
-  defp ensure(:lease) do
+  defp fleet do
     Gate.Lease.check!()
     :ok
   rescue
     e in Gate.Error -> {:error, e.message}
-  end
-
-  defp ensure(sprite) do
-    if Gate.Sprite.exists?(sprite) do
-      :ok
-    else
-      IO.puts(:stderr, "gate run: #{sprite}: creating")
-
-      case Gate.Sprite.create(sprite) do
-        {_, 0} -> :ok
-        {out, _} -> {:error, "#{sprite} could not be created: #{Gate.Sprite.last_line(out)}"}
-      end
-    end
   end
 
   # tree.patch (`git diff --binary HEAD`) and untracked.tar (the untracked
@@ -139,7 +116,7 @@ defmodule Gate.Run do
            stderr_to_stdout: true
          ) do
       {out, 0} -> {:ok, out |> String.trim() |> String.to_integer()}
-      {out, _} -> {:error, "the working tree could not be packed: #{Gate.Sprite.last_line(out)}"}
+      {out, _} -> {:error, "the working tree could not be packed: #{Gate.last_line(out)}"}
     end
   end
 

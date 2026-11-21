@@ -5,60 +5,26 @@ defmodule Gate.CommandsTest do
 
   @moduletag :tmp_dir
 
+  import Gate.Fake, only: [vm: 1]
+
   setup %{tmp_dir: tmp} = context do
-    env = Fake.setup(tmp, ~w(gate-1 gate-2), Map.get(context, :gate, %{}))
+    env = Fake.setup(tmp, Map.get(context, :gate, %{}))
     on_exit(fn -> Fake.stop(env.root) end)
     env
   end
 
-  test "run: the working tree's changes over HEAD on a dev Sprite it creates, the output streamed, the status the command's",
-       env do
-    File.write!(
-      Path.join(env.top, "cmd.sh"),
-      File.read!(Path.join(env.top, "cmd.sh")) <> "# edited\n"
-    )
-
-    File.write!(Path.join(env.top, "new.txt"), "untracked and here\n")
-
-    {status, out, err} =
-      Fake.capture(fn ->
-        Gate.Run.main(Fake.config(env.top), ["bash", "cmd.sh", "cat", "new.txt"])
-      end)
-
-    assert status == 0, err
-    assert err =~ "dev-1: creating"
-    assert err =~ "with 2 uncommitted path(s)"
-    assert out =~ "working tree laid over"
-    assert out =~ "untracked and here"
-    assert File.read!(Path.join(env.root, "dev-1/home/proj/cmd.sh")) =~ "# edited"
-    assert [_] = Path.wildcard(Path.join(env.logs, "gate-run-dev-1-*.log"))
-
-    {status, _out, err} =
-      Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["bash", "cmd.sh", "exit", "3"]) end)
-
-    assert status == 3
-    assert err =~ "exit 3 in"
-  end
-
-  test "run: 125 when the Sprite fails, saying so", env do
-    File.mkdir_p!(Path.join(env.root, "dev-1/home"))
-    File.touch!(Path.join(env.root, "dev-1/down"))
-    {status, _out, err} = Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
-    assert status == 125
-    assert err =~ "dev-1 failed after"
-    assert err =~ "(exit 125, not the command's result)"
-  end
-
-  describe "run on exe.dev" do
-    @describetag gate: %{"pool" => "exe", "keep" => ["_build"]}
-
-    setup do
-      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
-    end
+  describe "run" do
+    @describetag gate: %{"keep" => ["_build"]}
 
     test "leases its own VM from Fleet, lays the working tree over HEAD, streams, gives it back",
          env do
-      fleet = Gate.FakeFleet.start(~w(gate-1))
+      fleet = Fake.fleet([vm(1)])
+
+      File.write!(
+        Path.join(env.top, "cmd.sh"),
+        File.read!(Path.join(env.top, "cmd.sh")) <> "# edited\n"
+      )
+
       File.write!(Path.join(env.top, "new.txt"), "untracked and here\n")
 
       {status, out, err} =
@@ -68,15 +34,17 @@ defmodule Gate.CommandsTest do
 
       assert status == 0, err
       assert err =~ "on exe.dev: "
-      assert err =~ "with 1 uncommitted path(s)"
+      assert err =~ "with 2 uncommitted path(s)"
+      assert out =~ "working tree laid over"
       assert out =~ "untracked and here"
-      assert err =~ ~r/exit 0 in \d+ s on gate-1/
+      assert File.read!(Path.join(env.root, "vm-1.exe.xyz/home/proj/cmd.sh")) =~ "# edited"
+      assert err =~ ~r/exit 0 in \d+ s on vm-1\.exe\.xyz/
 
       assert [%{"pool" => "exe", "part" => "run", "priority" => "session"}] =
                Gate.FakeFleet.leases(fleet)
 
-      assert Gate.FakeFleet.released(fleet) == [{"gate-1", "green"}]
-      assert [_] = Path.wildcard(Path.join(env.logs, "gate-run-gate-1-*.log"))
+      assert Gate.FakeFleet.released(fleet) == [{vm(1), "green"}]
+      assert [_] = Path.wildcard(Path.join(env.logs, "gate-run-vm-1.exe.xyz-*.log"))
 
       {status, _out, err} =
         Fake.capture(fn ->
@@ -85,17 +53,16 @@ defmodule Gate.CommandsTest do
 
       assert status == 3
       assert err =~ "exit 3 in"
-      Gate.FakeFleet.stop(fleet)
     end
 
     test "an app build holding an empty .beam (an unsynced host's) is dropped before setup",
          env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-1))
+      Fake.fleet([vm(1)])
       {0, _, err} = Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
       assert err =~ "exit 0"
 
-      ebin = Path.join(env.root, "gate-1/home/proj/_build/test/lib/proj/ebin")
-      deps = Path.join(env.root, "gate-1/home/proj/_build/test/lib/dep/ebin")
+      ebin = Path.join(env.root, "vm-1.exe.xyz/home/proj/_build/test/lib/proj/ebin")
+      deps = Path.join(env.root, "vm-1.exe.xyz/home/proj/_build/test/lib/dep/ebin")
       File.mkdir_p!(ebin)
       File.mkdir_p!(deps)
       File.write!(Path.join(ebin, "Elixir.Good.beam"), "FOR1")
@@ -107,21 +74,30 @@ defmodule Gate.CommandsTest do
       assert out =~ "empty .beam files in _build/test/lib/proj/ebin; dropping that build"
       refute File.exists?(Path.dirname(ebin))
       assert File.exists?(Path.join(deps, "Elixir.Dep.beam"))
-      Gate.FakeFleet.stop(fleet)
     end
 
     test "a VM that fails reruns the command once on the next VM leased", env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
-      File.mkdir_p!(Path.join(env.root, "gate-1/home"))
-      File.touch!(Path.join(env.root, "gate-1/down"))
+      fleet = Fake.fleet([vm(1), vm(2)])
+      File.touch!(Path.join(env.root, "vm-1.exe.xyz/down"))
 
       {status, _out, err} =
         Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
 
       assert status == 0, err
-      assert err =~ "rerunning on gate-2"
-      assert [{"gate-1", "restarted"}, {"gate-2", "green"}] = Gate.FakeFleet.released(fleet)
-      Gate.FakeFleet.stop(fleet)
+      assert err =~ "rerunning on vm-2.exe.xyz"
+
+      assert [{"vm-1.exe.xyz", "restarted"}, {"vm-2.exe.xyz", "green"}] =
+               Gate.FakeFleet.released(fleet)
+    end
+
+    test "125 when both VMs fail, saying so", env do
+      Fake.fleet([vm(1), vm(2)])
+      File.touch!(Path.join(env.root, "vm-1.exe.xyz/down"))
+      File.touch!(Path.join(env.root, "vm-2.exe.xyz/down"))
+      {status, _out, err} = Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
+      assert status == 125
+      assert err =~ "vm-2.exe.xyz failed after"
+      assert err =~ "(exit 125, not the command's result)"
     end
 
     test "125 when Fleet does not answer, saying so", env do
@@ -139,54 +115,24 @@ defmodule Gate.CommandsTest do
     end
   end
 
-  test "pool: provision gates a Sprite and checkpoints it under the stamp; status then says ready",
-       env do
-    config = Fake.config(env.top)
-    {status, _out, err} = Fake.capture(fn -> Gate.Pool.main(config, ["provision", "gate-1"]) end)
-    assert status == 0, err
-    sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
-    stamp = Gate.Stamp.stamp(config, sha)
-
-    assert File.read!(Path.join(env.root, "gate-1/checkpoints")) =~
-             "cp-1  green gate #{String.slice(sha, 0, 8)} stamp #{stamp}"
-
-    {0, out, _} = Fake.capture(fn -> Gate.Pool.main(config, ["status"]) end)
-    assert out =~ "gate-1  ready, checkpoint cp-1"
-    assert out =~ "gate-2  stale stamp none"
-
-    # Provisioned already: nothing runs.
-    {0, _, err} = Fake.capture(fn -> Gate.Pool.main(config, ["provision", "gate-1"]) end)
-    assert err =~ "gate-1: ready"
-
-    assert File.read!(Path.join(env.root, "gate-1/checkpoints"))
-           |> String.split("\n", trim: true)
-           |> length() == 1
-  end
-
-  test "pool: a Sprite outside the pool is refused", env do
-    assert_raise Gate.Error, ~r/dev-1 is not a gate Sprite/, fn ->
-      Gate.Pool.main(Fake.config(env.top), ["exec", "dev-1", "true"])
-    end
-  end
-
   test "times: weights from the newest gate whose every suite part was green", env do
     Fake.parts(env.top, [{"static", "x"}, {"test-1", "x"}, {"test-2", "x"}])
     File.mkdir_p!(env.logs)
 
-    write = fn sprite, run, part, lines, exit ->
+    write = fn host, run, part, lines, exit ->
       File.write!(
-        Path.join(env.logs, "#{sprite}-#{run}-#{part}.log"),
+        Path.join(env.logs, "#{host}-#{run}-#{part}.log"),
         Enum.join(lines ++ ["sprite-gate: exit #{exit}"], "\n") <> "\n"
       )
     end
 
     old = "20261027-100000-aaaaaaaa"
     new = "20261028-100000-bbbbbbbb"
-    write.("gate-1", old, "test-1", ["gate-time: test/a_test.exs 1000 0"], 0)
-    write.("gate-2", old, "test-2", ["gate-time: test/b_test.exs 12000 5"], 0)
+    write.("vm-1.exe.xyz", old, "test-1", ["gate-time: test/a_test.exs 1000 0"], 0)
+    write.("rig-part-1121-1-ab.exe.xyz", old, "test-2", ["gate-time: test/b_test.exs 12000 5"], 0)
     # The newer run's test-2 was red: not used.
-    write.("gate-1", new, "test-1", ["gate-time: test/a_test.exs 9 0"], 0)
-    write.("gate-2", new, "test-2", ["gate-time: test/b_test.exs 9 0"], 1)
+    write.("vm-1.exe.xyz", new, "test-1", ["gate-time: test/a_test.exs 9 0"], 0)
+    write.("vm-2.exe.xyz", new, "test-2", ["gate-time: test/b_test.exs 9 0"], 1)
 
     {0, _, err} = Fake.capture(fn -> Gate.Times.main(Fake.config(env.top), []) end)
     assert err =~ "2 files from run #{old}"
@@ -196,7 +142,7 @@ defmodule Gate.CommandsTest do
   end
 
   test "deadline holds a command that ignores TERM to its limit and ends it" do
-    deadline = Path.join(Gate.Sprite.root(), "libexec/deadline")
+    deadline = Path.join(Gate.root(), "libexec/deadline")
     t0 = System.monotonic_time(:millisecond)
 
     {_, status} =
@@ -210,7 +156,7 @@ defmodule Gate.CommandsTest do
   end
 
   test "deadline ends its command when its caller dies" do
-    deadline = Path.join(Gate.Sprite.root(), "libexec/deadline")
+    deadline = Path.join(Gate.root(), "libexec/deadline")
     t0 = System.monotonic_time(:millisecond)
     # The caller exits after a second; the command holds stdout open until it ends.
     System.cmd("sh", ["-c", ~s("$0" 30 sleep 30 & sleep 1; exit 0), deadline])
@@ -227,33 +173,36 @@ defmodule Gate.CommandsTest do
            }
          ]
        }
-  test "golden: sets up and warms each cache, no part run; a step whose Sprite restarted resumes there; the stamp on stdout",
+  test "golden: sets up and warms each cache, no part run; a step whose VM restarted resumes there; the stamp on stdout",
        env do
     Fake.parts(env.top, [{"one", "bash cmd.sh red"}, {"two", "bash cmd.sh red"}])
     Fake.git(env.top, ["add", "."])
     Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "parts"])
     config = Fake.config(env.top)
-    {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "gate-2") end)
+    {status, out, err} = Fake.capture(fn -> Gate.Golden.main(config, "vm-2.exe.xyz") end)
     assert status == 0, err
     sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
     assert out == Gate.Stamp.stamp(config, sha) <> "\n"
     assert err =~ "setup: green"
     # Its first restart relaunches it within the try (while warming), as
-    # does the second (a restart), and the third ends the try: no Sprite
-    # is free for a golden's rerun.
+    # does the second (a restart), and the third ends the try: a golden's
+    # step does not rerun elsewhere.
     assert err =~ "warm-plt: sprite_failed"
     assert err =~ "warm-plt: green"
     refute err =~ ~r/\b(one|two):/
-    [setup] = Path.wildcard(Path.join(env.logs, "gate-2-*-setup.log"))
+    [setup] = Path.wildcard(Path.join(env.logs, "vm-2.exe.xyz-*-setup.log"))
     assert File.read!(setup) =~ "setup ran"
-    assert File.read!(Path.join(env.root, "gate-2/home/.gate-warm/proj-plt")) != ""
-    refute File.exists?(Path.join(env.root, "gate-1/home/parts"))
+    assert File.read!(Path.join(env.root, "vm-2.exe.xyz/home/.gate-warm/proj-plt")) != ""
+    refute File.exists?(Path.join(env.root, "vm-1.exe.xyz/home/parts"))
   end
 
-  test "golden: a Sprite that fails a step every try fails the golden", env do
+  test "golden: a VM that fails a step every try fails the golden", env do
     File.write!(Path.join(env.top, "setup.sh"), "exit 3\n")
     Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "no setup"])
-    {status, _out, err} = Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
+
+    {status, _out, err} =
+      Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "vm-2.exe.xyz") end)
+
     assert status == 2, err
     assert length(String.split(err, "setup: sprite_failed")) == 4
   end
@@ -279,9 +228,12 @@ defmodule Gate.CommandsTest do
     Fake.parts(env.top, [{"one", "bash cmd.sh green"}])
     Fake.git(env.top, ["add", "."])
     Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "parts"])
-    {status, _out, err} = Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
+
+    {status, _out, err} =
+      Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "vm-2.exe.xyz") end)
+
     assert status == 0, err
-    [log] = Path.wildcard(Path.join(env.logs, "gate-2-*-warm-plt.log"))
+    [log] = Path.wildcard(Path.join(env.logs, "vm-2.exe.xyz-*-warm-plt.log"))
     assert File.read!(log) =~ "seeded plt"
     assert File.read!(log) =~ "warmed plt"
   end
@@ -300,12 +252,12 @@ defmodule Gate.CommandsTest do
        env do
     for _ <- 1..2 do
       {status, _out, err} =
-        Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
+        Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "vm-2.exe.xyz") end)
 
       assert status == 0, err
     end
 
-    assert File.read!(Path.join(env.root, "gate-2/home/builds")) == "built\nbuilt\n"
+    assert File.read!(Path.join(env.root, "vm-2.exe.xyz/home/builds")) == "built\nbuilt\n"
   end
 
   test "stamp <rev>: the stamp as that commit's .gate.json names it", env do

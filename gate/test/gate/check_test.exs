@@ -1,13 +1,15 @@
 defmodule Gate.CheckTest do
-  # The fake CLI is on PATH and its Sprites in $FAKE_SPRITES, both global.
+  # The fakes are on PATH, their VMs in $FAKE_VMS and Fleet's socket in
+  # $GATE_FLEET_SOCKET, all global.
   use ExUnit.Case, async: false
 
-  alias Gate.Fake
+  alias Gate.{Fake, FakeFleet}
+  import Gate.Fake, only: [vm: 1]
 
   @moduletag :tmp_dir
 
   setup %{tmp_dir: tmp} = context do
-    env = Fake.setup(tmp, ~w(gate-1 gate-2 gate-3), Map.get(context, :gate, %{}))
+    env = Fake.setup(tmp, Map.get(context, :gate, %{}))
     on_exit(fn -> Fake.stop(env.root) end)
     env
   end
@@ -25,44 +27,66 @@ defmodule Gate.CheckTest do
     end
   end
 
-  defp log(%{logs: logs}, sprite, part) do
-    [file] = Path.wildcard(Path.join(logs, "#{sprite}-*-#{part}.log"))
-    File.read!(file)
+  # The newest log of `part`, on `host` or any.
+  defp log(%{logs: logs}, part, host \\ "*") do
+    logs |> Path.join("#{host}-*-#{part}.log") |> Path.wildcard() |> Enum.max() |> File.read!()
   end
 
-  test "green when every part is: one Sprite each, the spare unused, the row in the worker's format",
+  defp commit(env, message),
+    do:
+      Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", message])
+
+  @tag gate: %{
+         "warm" => [
+           %{"name" => "plt", "parts" => ["static"], "key" => [".gate.json"], "command" => "true"}
+         ]
+       }
+  test "green when every part is: a leased VM each, given back green, the row in the worker's format",
        env do
+    fleet = Fake.fleet([vm(1), vm(2)])
+
     {status, out, err} =
       check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
 
     assert status == 0, err
     assert out == ""
-    assert err =~ "as 2 parts on gate-1 gate-2, spare gate-3"
+    assert err =~ "as 2 parts on exe.dev"
     assert err =~ "green in"
 
     [row] = Fake.rows(env.logs)
     assert [_at, sha, "check", "green", _wall, static, test] = String.split(row, "\t")
     assert sha =~ ~r/\A[0-9a-f]{40}\z/
-    assert static =~ ~r/\Astatic:\d+:gate-1:green\z/
-    assert test =~ ~r/\Atest-1:\d+:gate-2:green\z/
+    assert static =~ ~r/\Astatic:\d+:vm-[12]\.exe\.xyz:green\z/
+    assert test =~ ~r/\Atest-1:\d+:vm-[12]\.exe\.xyz:green\z/
+    assert Enum.map(FakeFleet.released(fleet), &elem(&1, 1)) == ~w(green green)
 
-    log = log(env, "gate-1", "static")
-    # A fresh Sprite has no stamp: it takes the commit's tools first.
+    # Each part asks for an exe.dev VM, naming the warm keys it needs.
+    leases = Enum.sort_by(FakeFleet.leases(fleet), & &1["part"])
+    assert [%{"pool" => "exe", "warm" => [key]}, %{"pool" => "exe", "warm" => []}] = leases
+    assert key =~ ~r/^[0-9a-f]{16}$/
+
+    log = log(env, "static")
+    # A fresh VM has no stamp: it takes the commit's tools first.
     assert log =~ "refreshing tools"
     assert log =~ "provisioning"
     assert log =~ "setup ran"
     assert log =~ "all good"
-    assert Gate.Sprite.last_line(log) == "sprite-gate: exit 0"
+    assert Gate.last_line(log) == "sprite-gate: exit 0"
+
+    [part] = Path.wildcard(Path.join(env.root, "vm-*/home/parts/*-static-*"))
+    assert File.read!(Path.join(part, "launch.sh")) =~ "exe.dev VM"
+    assert File.read!(Path.join(part, "vars")) =~ "WARM_NAMES=('plt')"
   end
 
-  test "a Sprite whose last tip this checkout lacks gets only the commits since the newest first parent it holds",
+  test "a VM whose last tip this checkout lacks gets only the commits since the newest first parent it holds",
        env do
+    Fake.fleet([vm(1)])
     {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
     assert status == 0, err
     held = env.top |> Fake.git(["rev-parse", "HEAD"]) |> String.trim()
 
-    # A session's own gate left a commit on the Sprite this checkout never had.
-    repo = Path.join(env.root, "gate-1/home/proj")
+    # Another checkout left a commit on the VM that this one never had.
+    repo = Path.join(env.root, "vm-1.exe.xyz/home/proj")
 
     Fake.git(repo, [
       "-c",
@@ -80,112 +104,52 @@ defmodule Gate.CheckTest do
 
     File.write!(Path.join(env.top, "new.txt"), "new\n")
     Fake.git(env.top, ["add", "."])
-    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "new"])
+    commit(env, "new")
 
     {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
     assert status == 0, err
-    [bundle] = Path.wildcard(Path.join(env.root, "gate-1/home/parts/*/in.bundle"))
+    [bundle] = Path.wildcard(Path.join(env.root, "vm-1.exe.xyz/home/parts/*/in.bundle"))
     header = bundle |> File.read!() |> String.split("\n\n", parts: 2) |> hd()
-    assert header =~ "\n-#{held}", "the bundle should stop at the commit the Sprite holds"
-    newest = env.logs |> Path.join("gate-1-*-static.log") |> Path.wildcard() |> Enum.max()
-    assert File.read!(newest) =~ ~r/gate: uploaded [\d.]+ MB in \d+ s/
+    assert header =~ "\n-#{held}", "the bundle should stop at the commit the VM holds"
+    assert log(env, "static") =~ ~r/gate: uploaded [\d.]+ MB in \d+ s/
   end
 
   test "a red part fails the gate, never reruns, and prints a digest of its failing tests", env do
+    fleet = Fake.fleet([vm(1), vm(2), vm(3)])
+
     {status, out, _err} =
       check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh red"}])
 
     assert status == 1
-    assert out =~ "== test-1 on gate-2 (exit 1)"
+    assert out =~ ~r/== test-1 on vm-\d\.exe\.xyz \(exit 1\)/
     assert out =~ "1) test the widget works (WidgetTest)"
     assert out =~ "3 tests, 1 failure"
     [row] = Fake.rows(env.logs)
     assert row =~ "\tred\t"
-    assert row =~ ~r/test-1:\d+:gate-2:red$/
-    refute File.exists?(Path.join(env.root, "gate-3/home/parts"))
+    assert row =~ ~r/test-1:\d+:vm-\d\.exe\.xyz:red$/
+    assert Enum.sort(Enum.map(FakeFleet.released(fleet), &elem(&1, 1))) == ~w(green red)
+    assert length(FakeFleet.leases(fleet)) == 2
   end
 
-  test "a Sprite that cannot take the part: it reruns on the spare, and the gate says so", env do
-    File.touch!(Path.join(env.root, "gate-2/down"))
-
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+  test "a VM that refuses ssh fails the part, which reruns on the next VM leased", env do
+    fleet = Fake.fleet([vm(1), vm(2)])
+    File.touch!(Path.join(env.root, "vm-1.exe.xyz/down"))
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
 
     assert status == 0, err
-    assert err =~ "test-1: gate-2 failed"
-    assert err =~ "rerunning on gate-3"
+    assert err =~ "could not ask vm-1.exe.xyz what it holds"
+    assert err =~ "rerunning on vm-2.exe.xyz"
     [row] = Fake.rows(env.logs)
-    assert row =~ ~r/test-1:\d+:gate-3:green:reran-from-gate-2$/
-  end
-
-  test "two Sprites fail: one part reruns on the spare, the other there once the first ends",
-       env do
-    File.touch!(Path.join(env.root, "gate-1/down"))
-    File.touch!(Path.join(env.root, "gate-2/down"))
-
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
-
-    assert status == 0, err
-    [row] = Fake.rows(env.logs)
-
-    assert row =~
-             ~r/static:\d+:gate-3:green:reran-from-gate-1\ttest-1:\d+:gate-3:green:reran-from-gate-2$/
-
-    assert err =~ "reran static on gate-3, test-1 on gate-3"
-  end
-
-  test "a crash reruns on a Sprite whose own part has ended when the spare is taken", env do
-    File.touch!(Path.join(env.root, "gate-2/down"))
-
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh crash-once"}, {"test-1", "bash cmd.sh green"}])
-
-    assert status == 0, err
-    [row] = Fake.rows(env.logs)
-
-    assert row =~
-             ~r/static:\d+:gate-3:green:reran-from-gate-1\ttest-1:\d+:gate-3:green:reran-from-gate-2$/
-  end
-
-  @tag gate: %{"limits" => %{"poll" => 0.1, "launch" => 2}}
-  test "a launch whose line never came through but whose job runs is launched, not a failed Sprite",
-       env do
-    File.touch!(Path.join(env.root, "gate-1/tty-silent"))
-
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
-
-    assert status == 0, err
-    refute err =~ "failed"
-    [row] = Fake.rows(env.logs)
-    assert row =~ ~r/static:\d+:gate-1:green\t/
-  end
-
-  @tag gate: %{"limits" => %{"poll" => 0.1, "launch" => 60}}
-  test "a launch line lost among the keeper's dots is read from the Sprite at the first dot",
-       env do
-    File.touch!(Path.join(env.root, "gate-1/tty-lossy"))
-    lost = Path.join(env.tmp, "lost")
-    System.put_env("GATE_LOST_LAUNCH", lost)
-    on_exit(fn -> System.delete_env("GATE_LOST_LAUNCH") end)
-    parts = [{"static", "bash cmd.sh sleep 6"}, {"test-1", "bash cmd.sh green"}]
-    t0 = System.monotonic_time(:second)
-    {status, _out, err} = check(env, parts)
-    assert status == 0, err
-    refute err =~ "failed"
-    assert System.monotonic_time(:second) - t0 < 30
-    # What the TTY showed is kept, to learn what hid the line.
-    assert [raw] = File.ls!(lost)
-    assert File.read!(Path.join(lost, raw)) =~ "garbled"
+    assert row =~ ~r/\tstatic:\d+:vm-2\.exe\.xyz:green:reran-from-vm-1\.exe\.xyz\z/
+    assert FakeFleet.released(fleet) == [{vm(1), "restarted"}, {vm(2), "green"}]
   end
 
   test "no verdict when a part's rerun fails too: neither green nor red", env do
-    File.touch!(Path.join(env.root, "gate-2/down"))
-    File.touch!(Path.join(env.root, "gate-3/down"))
+    Fake.fleet([vm(1), vm(2)])
+    File.touch!(Path.join(env.root, "vm-1.exe.xyz/down"))
+    File.touch!(Path.join(env.root, "vm-2.exe.xyz/down"))
 
-    {status, out, err} =
-      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+    {status, out, err} = check(env, [{"static", "bash cmd.sh green"}])
 
     assert status == 2
     assert out == ""
@@ -195,86 +159,73 @@ defmodule Gate.CheckTest do
     assert row =~ "sprite-failed"
   end
 
-  test "a native crash reruns on the spare and is judged there", env do
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh crash-once"}, {"test-1", "bash cmd.sh green"}])
-
+  test "a native crash is given back as crashed and reruns on the next VM leased", env do
+    fleet = Fake.fleet([vm(1), vm(2)])
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh crash-once"}])
     assert status == 0, err
-    assert err =~ "a process crashed on gate-1"
+    assert err =~ "a process crashed on vm-1.exe.xyz"
+    assert FakeFleet.released(fleet) == [{vm(1), "crashed"}, {vm(2), "green"}]
     [row] = Fake.rows(env.logs)
-    assert row =~ ~r/static:\d+:gate-3:green:reran-from-gate-1/
-    assert log(env, "gate-1", "static") =~ "a native crash, not a gate result; reran on gate-3"
-    # A crashed Sprite is not free again: nothing else runs on gate-1.
-    assert row =~ ~r/test-1:\d+:gate-2:green$/
+    assert row =~ ":vm-2.exe.xyz:green:reran-from-vm-1.exe.xyz"
+
+    assert log(env, "static", vm(1)) =~
+             "a native crash, not a gate result; rerunning on the next VM the fleet leases"
   end
 
   test "a core the command left is named in its log, and only the newest three stay", env do
-    {status, _out, _err} =
-      check(env, [{"static", "bash cmd.sh core"}, {"test-1", "bash cmd.sh green"}])
-
+    Fake.fleet([vm(1)])
+    {status, _out, _err} = check(env, [{"static", "bash cmd.sh core"}])
     assert status == 1
 
-    assert log(env, "gate-1", "static") =~
+    assert log(env, "static") =~
              "sprite-gate: core " <>
-               Path.join(env.root, "gate-1/home/cores/core.!opt!node-20.1!bin!node.42.1761700000") <>
+               Path.join(
+                 env.root,
+                 "vm-1.exe.xyz/home/cores/core.!opt!node-20.1!bin!node.42.1761700000"
+               ) <>
                " (/opt/node-20.1/bin/node)"
 
-    assert env.root |> Path.join("gate-1/home/cores") |> File.ls!() |> length() == 3
+    assert env.root |> Path.join("vm-1.exe.xyz/home/cores") |> File.ls!() |> length() == 3
   end
 
   @tag gate: %{"limits" => %{"poll" => 0.1, "run" => 2, "unreachable" => 5, "launch" => 10}}
-  test "a part past its run limit is ended on its Sprite and reruns on the spare", env do
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh slow-once"}, {"test-1", "bash cmd.sh green"}])
+  test "a part past its run limit is ended on its VM and reruns on the next", env do
+    fleet = Fake.fleet([vm(1), vm(2)])
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh slow-once"}])
 
     assert status == 0, err
     assert err =~ "its run phase outlasted 2 s"
+    assert FakeFleet.released(fleet) == [{vm(1), "failed"}, {vm(2), "green"}]
     # Ended there, not left running: its command never got to its end.
     Process.sleep(500)
-    refute log(env, "gate-1", "static") =~ "never"
-    {ps, _} = System.cmd("pgrep", ["-f", Path.join(env.root, "gate-1")])
-    assert ps |> String.split() |> Enum.reject(&tail_client?/1) == []
+    refute log(env, "static", vm(1)) =~ "never"
+    {ps, _} = System.cmd("pgrep", ["-f", Path.join(env.root, "vm-1.exe.xyz")])
+    assert ps == ""
   end
 
-  test "a part whose Sprite restarted is relaunched there; restarted again, it reruns on the spare",
+  test "a part whose VM restarted keeps its lease and is relaunched there; restarted again, it is given back as restarted",
        env do
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh restart-once"}, {"test-1", "bash cmd.sh green"}])
-
+    fleet = Fake.fleet([vm(1), vm(2)])
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh restart-once"}])
     assert status == 0, err
-    assert err =~ "static: gate-1 restarted; rerunning it there"
-    [row] = Fake.rows(env.logs)
-    assert row =~ ~r/\tstatic:\d+:gate-1:green\t/
-    assert File.read!(Path.join(env.root, "gate-3/home/.life")) == "life-1\n"
-    refute File.exists?(Path.join(env.root, "gate-3/home/parts"))
+    assert err =~ "static: vm-1.exe.xyz restarted; rerunning it there"
+    assert [{"vm-1.exe.xyz", "green"}] = FakeFleet.released(fleet)
 
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh restarts 2"}, {"test-1", "bash cmd.sh green"}])
-
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh restarts 2"}])
     assert status == 0, err
     assert err =~ "restarted mid-part (life life-"
-    assert List.last(Fake.rows(env.logs)) =~ ~r/\tstatic:\d+:gate-3:green:reran-from-gate-1/
+    assert [_, {first, "restarted"}, {second, "green"}] = FakeFleet.released(fleet)
+    assert first != second
+    assert List.last(Fake.rows(env.logs)) =~ ~r/\tstatic:\d+:#{second}:green:reran-from-#{first}/
   end
 
-  test "a Sprite that stops answering mid-part fails it after the unreachable limit", env do
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh vanish-once"}, {"test-1", "bash cmd.sh green"}])
+  test "a VM that stops answering mid-part fails it after the unreachable limit", env do
+    fleet = Fake.fleet([vm(1), vm(2)])
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh vanish-once"}])
 
     assert status == 0, err
     assert err =~ "unreachable for 2 s"
-    [row] = Fake.rows(env.logs)
-    assert row =~ "reran-from-gate-1"
-  end
-
-  test "a keeper that goes is relaunched, and the part runs on", env do
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh drop-keeper"}, {"test-1", "bash cmd.sh green"}])
-
-    assert status == 0, err
-    log = log(env, "gate-1", "static")
-    assert log =~ "outlived its keeper"
-    assert log =~ "its keeper had gone; relaunched it"
-    refute Fake.rows(env.logs) |> hd() =~ "reran"
+    assert FakeFleet.released(fleet) == [{vm(1), "restarted"}, {vm(2), "green"}]
   end
 
   @tag gate: %{
@@ -288,17 +239,18 @@ defmodule Gate.CheckTest do
          ],
          "limits" => %{"poll" => 0.1, "run" => 2, "unreachable" => 5, "launch" => 10}
        }
-  test "a warm cache builds before its part, outside the run limit, once per key; a restart while warming relaunches it on the same Sprite",
+  test "a warm cache builds before its part, outside the run limit, once per key; a restart while warming relaunches it on the same VM",
        env do
+    # One VM, so each part finds what the last left.
+    Fake.fleet([vm(1)])
     File.touch!(Path.join(env.root, "warm-restarted"))
     parts = [{"static-1", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}]
     {status, _out, err} = check(env, parts)
     # The cache took 3 s; the run limit is 2.
     assert status == 0, err
     assert File.read!(Path.join(env.root, "warms")) == "warm run\n"
-    log = log(env, "gate-1", "static-1")
-    assert log =~ "warmed plt"
-    refute log(env, "gate-2", "test-1") =~ "warming plt"
+    assert log(env, "static-1") =~ "warmed plt"
+    refute log(env, "test-1") =~ "warming plt"
 
     # The same key: no build.
     {0, _, _} = check(env, parts)
@@ -307,19 +259,19 @@ defmodule Gate.CheckTest do
     # A restart while warming: the part relaunches where the cache was half built.
     File.rm!(Path.join(env.root, "warm-restarted"))
     File.write!(Path.join(env.top, "cmd.sh"), File.read!(Path.join(env.top, "cmd.sh")) <> "\n")
-
-    Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "a new key"])
+    commit(env, "a new key")
 
     {status, _out, err} = check(env, parts)
     assert status == 0, err
-    assert err =~ "gate-1 restarted while warming; relaunching it there"
+    assert err =~ "vm-1.exe.xyz restarted while warming; relaunching it there"
     assert File.read!(Path.join(env.root, "warms")) == "warm run\nwarm run\nwarm run\n"
-    assert List.last(Fake.rows(env.logs)) =~ ~r/static-1:\d+:gate-1:green\t/
+    assert List.last(Fake.rows(env.logs)) =~ ~r/static-1:\d+:vm-1\.exe\.xyz:green\t/
   end
 
   @tag gate: %{"image" => [".tool-versions"], "stamp" => nil, "provision" => nil}
   test "a project on the image: rig's image script provisions it, and the stamp covers that script",
        env do
+    Fake.fleet([vm(1)])
     image = Path.join(env.tmp, "image.sh")
 
     File.write!(image, ~S"""
@@ -330,19 +282,17 @@ defmodule Gate.CheckTest do
     System.put_env("GATE_IMAGE", image)
     on_exit(fn -> System.delete_env("GATE_IMAGE") end)
 
-    {status, _out, err} =
-      check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+    {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
 
     assert status == 0, err
-    log = log(env, "gate-1", "static")
-    assert log =~ ~r"image for proj from \S+/proj/\.tool-versions"
+    assert log(env, "static") =~ ~r"image for proj from \S+/proj/\.tool-versions"
 
     want =
       :crypto.hash(:sha256, [File.read!(Path.join(env.top, ".tool-versions")), File.read!(image)])
       |> Base.encode16(case: :lower)
       |> binary_part(0, 16)
 
-    assert File.read!(Path.join(env.root, "gate-1/home/proj-stamp")) == want <> "\n"
+    assert File.read!(Path.join(env.root, "vm-1.exe.xyz/home/proj-stamp")) == want <> "\n"
   end
 
   test "the stamp is the hash of the stamp files at the commit, in order, as the old pools' was",
@@ -359,23 +309,42 @@ defmodule Gate.CheckTest do
     assert Gate.Stamp.stamp(Fake.config(env.top), sha) == expected
   end
 
-  test "bin/gate holds the pool's lock and runs the gate in the checkout", env do
+  @tag gate: %{
+         "warm" => [
+           %{"name" => "plt", "parts" => ["static"], "key" => [".gate.json"], "command" => "true"}
+         ]
+       }
+  test "gate keys names the stamp and each warm cache's key at a commit", env do
+    config = Fake.config(env.top)
+    sha = Gate.Check.git!(config, ["rev-parse", "HEAD"])
+    stamp = Gate.Stamp.stamp(config, sha)
+    [{name, ^stamp}, {warm, key}] = Gate.Stamp.keys(config, sha)
+    assert warm == name <> "-plt"
+    assert key == Gate.Stamp.warm_key(config, sha, stamp, hd(config.warm))
+
+    # A warm cache's key changes with its command, not only its files.
+    other = Map.put(hd(config.warm), "command", "true --other")
+    refute Gate.Stamp.warm_key(config, sha, stamp, other) == key
+  end
+
+  test "bin/gate runs the gate in the checkout", env do
+    Fake.fleet([vm(1)])
     Fake.parts(env.top, [{"static", "bash cmd.sh green"}])
 
     {out, status} =
-      System.cmd(Path.join(Gate.Sprite.root(), "bin/gate"), ["check"],
+      System.cmd(Path.join(Gate.root(), "bin/gate"), ["check"],
         cd: env.top,
         stderr_to_stdout: true
       )
 
     assert status == 0, out
     assert out =~ "check-remote: green in"
-    assert File.exists?(Path.join(env.tmp, "locks"))
   end
 
-  test "a gate stopped from outside ends the parts it launched on their Sprites", env do
+  test "a gate stopped from outside ends the parts it launched on their VMs", env do
+    Fake.fleet([vm(1)])
     Fake.parts(env.top, [{"static", "bash cmd.sh slow-once"}])
-    gate = Path.join(Gate.Sprite.root(), "bin/gate")
+    gate = Path.join(Gate.root(), "bin/gate")
 
     port =
       Port.open({:spawn_executable, gate}, [
@@ -383,12 +352,11 @@ defmodule Gate.CheckTest do
         :exit_status,
         :stderr_to_stdout,
         args: ["check"],
-        cd: env.top,
-        env: [{~c"GATE_POOL_HELD", ~c"1"}]
+        cd: env.top
       ])
 
     {:os_pid, pid} = Port.info(port, :os_pid)
-    job = Path.join(env.root, "gate-1/home/parts")
+    job = Path.join(env.root, "vm-1.exe.xyz/home/parts")
 
     wait_until(fn ->
       match?([_], Path.wildcard(Path.join(job, "*/phase"))) and
@@ -402,282 +370,57 @@ defmodule Gate.CheckTest do
     {_, status} =
       System.cmd("kill", ["-0", File.read!(pidfile) |> String.trim()], stderr_to_stdout: true)
 
-    assert status != 0, "the part still runs on its Sprite"
+    assert status != 0, "the part still runs on its VM"
   end
 
-  defp wait_until(fun, tries \\ 200) do
-    cond do
-      fun.() -> :ok
-      tries == 0 -> flunk("never happened")
-      true -> Process.sleep(100) && wait_until(fun, tries - 1)
-    end
-  end
-
-  defp tail_client?(pid) do
-    {cmd, _} = System.cmd("ps", ["-o", "command=", "-p", pid])
-    cmd =~ "tail -f"
-  end
-
-  describe "the local disk" do
-    @describetag gate: %{
-                   "pool" => ["gate-1", "gate-2"],
-                   "keep" => ["cache"],
-                   "local" => %{"paths" => ["cache", "~/data"], "tools" => ["tool"]}
-                 }
-
-    setup %{tmp_dir: tmp, root: root} do
-      local = Fake.local_disk(tmp)
-
-      on_exit(fn ->
-        for var <- ~w(GATE_LOCAL_ROOT GATE_LOCAL_OPT GATE_LOCAL_BUDGET_MB),
-            do: System.delete_env(var)
-      end)
-
-      home = Path.join(root, "gate-1/home")
-      tool = Path.join(local.opt, "tool-1")
-      File.mkdir_p!(Path.join(tool, "bin"))
-      File.write!(Path.join(tool, "bin/the-tool"), "the tool\n")
-      File.mkdir_p!(Path.join(home, "data"))
-      File.write!(Path.join(home, "data/row"), "a row\n")
-      File.write!(Path.join(home, "proj-env.sh"), "export PATH=#{tool}/bin:$PATH\n")
-      Map.merge(local, %{home: home, tool: tool})
-    end
-
-    defp commit_commands(env) do
-      Fake.git(env.top, ["add", "."])
-      Fake.git(env.top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "cmd"])
-    end
-
-    # The part after it: its log, on a Sprite with one part at a time.
-    defp part(env, command) do
-      File.rm_rf!(env.logs)
-      {status, _out, err} = check(env, [{"one", command}])
-      assert status == 0, err
-      log(env, "gate-1", "one")
-    end
-
-    test "paths and tools are copied once and mounted, and what a part writes lands there",
-         env do
-      log = part(env, "bash cmd.sh write-cache first")
-      assert log =~ "local disk: copied 3, mounted 3 new"
-
-      assert File.read!(Path.join(env.disk, "projects/proj/cache/built")) == "first\n"
-      assert File.read!(Path.join(env.disk, "projects/proj/~%data/row")) == "a row\n"
-      assert File.read!(Path.join(env.disk, "tools/tool-1/bin/the-tool")) == "the tool\n"
-
-      # The same paths read the copy.
-      assert File.read!(Path.join(env.tool, "bin/the-tool")) == "the tool\n"
-      assert File.read!(Path.join(env.home, "proj/cache/built")) == "first\n"
-
-      log = part(env, "bash cmd.sh cat-cache")
-      assert log =~ "first"
-      assert log =~ "local disk: copied 0, mounted 0 new"
-    end
-
-    test "a restart drops the mounts and the next part mounts the same copies", env do
-      part(env, "bash cmd.sh write-cache first")
-      unmount_all(env)
-
-      log = part(env, "bash cmd.sh cat-cache")
-      assert log =~ "first"
-      assert log =~ "local disk: copied 0, mounted 3 new"
-    end
-
-    test "after a restore the copies of paths go, since the root disk went back, and tools stay",
-         env do
-      part(env, "bash cmd.sh write-cache day")
-      unmount_all(env)
-      # The checkpoint holds no token (see the golden test below).
-      File.rm_rf!(Path.join(env.home, ".gate-local"))
-
-      log = part(env, "bash cmd.sh cat-cache")
-      assert log =~ "cache empty"
-      assert log =~ "local disk: copied 2, mounted 3 new"
-    end
-
-    test "a host move empties the disk: all of it is copied again", env do
-      part(env, "bash cmd.sh write-cache first")
-      unmount_all(env)
-      File.rm_rf!(env.disk)
-
-      log = part(env, "bash cmd.sh cat-cache")
-      assert log =~ "cache empty"
-      assert log =~ "local disk: copied 3, mounted 3 new"
-    end
-
-    test "what does not fit stays on the root disk, and the part still passes", env do
-      System.put_env("GATE_LOCAL_BUDGET_MB", "0")
-      log = part(env, "bash cmd.sh write-cache first")
-      assert log =~ "cache stays on the root disk"
-      assert log =~ "tool-1 stays on the root disk"
-      assert log =~ "local disk: copied 0, mounted 0 new"
-      assert File.read!(Path.join(env.home, "proj/cache/built")) == "first\n"
-      refute File.dir?(Path.join(env.disk, "projects/proj/cache"))
-    end
-
-    test "a golden runs on the root disk and leaves no token in its checkpoint", env do
-      part(env, "bash cmd.sh write-cache day")
-      commit_commands(env)
-
-      {status, _out, err} =
-        Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-1") end)
-
-      assert status == 0, err
-
-      refute File.exists?(Path.join(env.home, ".gate-local"))
-      refute Fake.mounted?(Path.join(env.home, "proj/cache"))
-      refute Fake.mounted?(env.tool)
-      refute File.exists?(Path.join(env.disk, "projects"))
-      # The tools' copies keep: they are the same whichever disk.
-      assert File.exists?(Path.join(env.disk, "tools/tool-1.ok"))
-    end
-
-    test "a provision writes to the root disk, and tools no env script names go", env do
-      part(env, "bash cmd.sh green")
-      File.mkdir_p!(Path.join(env.disk, "tools/tool-0"))
-      File.write!(Path.join(env.home, "proj-stamp"), "old\n")
-
-      log = part(env, "bash cmd.sh green")
-      assert log =~ "refreshing tools"
-      refute File.exists?(Path.join(env.disk, "tools/tool-0"))
-      assert File.exists?(Path.join(env.disk, "tools/tool-1"))
-      # Unmounted for it, mounted again after, and not copied again.
-      assert log =~ "local disk: copied 0, mounted 3 new"
-    end
-
-    defp unmount_all(env) do
-      for path <- [Path.join(env.home, "proj/cache"), Path.join(env.home, "data"), env.tool] do
-        {_, 0} = System.cmd("sudo", ["-n", "umount", path], env: [])
-      end
-    end
-  end
-
-  test "a local path in the checkout must be one `git clean` keeps", env do
-    json = Path.join(env.top, ".gate.json")
-    gate = json |> File.read!() |> JSON.decode!()
-    File.write!(json, JSON.encode!(Map.put(gate, "local", %{"paths" => ["_build"]})))
-
-    assert_raise Gate.Error, ~r/local paths not in keep: _build/, fn -> Fake.config(env.top) end
-  end
-
-  describe "on exe.dev" do
-    @describetag gate: %{
-                   "pool" => "exe",
-                   "warm" => [
-                     %{
-                       "name" => "plt",
-                       "parts" => ["static"],
-                       "key" => [".gate.json"],
-                       "command" => "true"
-                     }
-                   ]
-                 }
-
-    setup do
-      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
-    end
-
-    test "each part asks Fleet for an exe.dev VM, naming the warm keys it needs", env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
-
-      {status, _out, err} =
-        check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
-
-      assert status == 0, err
-      assert err =~ "as 2 parts on exe.dev"
-      leases = Enum.sort_by(Gate.FakeFleet.leases(fleet), & &1["part"])
-      assert [%{"pool" => "exe", "warm" => [key]}, %{"pool" => "exe", "warm" => []}] = leases
-      assert key =~ ~r/^[0-9a-f]{16}$/
-      Gate.FakeFleet.stop(fleet)
-    end
-
-    test "gate keys names the stamp and each warm cache's key at a commit", env do
-      config = Fake.config(env.top)
-      sha = Gate.Check.git!(config, ["rev-parse", "HEAD"])
-      stamp = Gate.Stamp.stamp(config, sha)
-      [{name, ^stamp}, {warm, key}] = Gate.Stamp.keys(config, sha)
-      assert warm == name <> "-plt"
-      assert key == Gate.Stamp.warm_key(config, sha, stamp, hd(config.warm))
-    end
-
-    test "a warm cache's key changes with its command, not only its files", env do
-      config = Fake.config(env.top)
-      sha = Gate.Check.git!(config, ["rev-parse", "HEAD"])
-      stamp = Gate.Stamp.stamp(config, sha)
-      warm = hd(config.warm)
-      other = Map.put(warm, "command", warm["command"] <> " --other")
-
-      refute Gate.Stamp.warm_key(config, sha, stamp, warm) ==
-               Gate.Stamp.warm_key(config, sha, stamp, other)
-    end
-  end
-
-  describe "on the retired shared pool" do
-    @describetag gate: %{"pool" => "fleet"}
-
-    test "a commit whose .gate.json names it is refused, saying why", env do
+  describe "a commit from before exe.dev" do
+    @tag gate: %{"pool" => "fleet"}
+    test "naming the shared Sprite pool is refused, saying why", env do
       error = assert_raise Gate.Error, fn -> check(env, [{"static", "bash cmd.sh green"}]) end
-      assert error.message =~ "the shared Sprite pool is retired"
+      assert error.message =~ "the Sprites are gone"
+      assert error.message =~ ~s("pool": "fleet")
       assert error.message =~ "rebase onto origin/main"
+    end
+
+    @tag gate: %{"pool" => ["gate-1", "gate-2"], "dev" => ["dev-1"], "locks" => "/tmp/x"}
+    test "naming its own Sprites is refused too; its Sprite keys are only ignored", env do
+      config = Fake.config(env.top)
+      refute Map.has_key?(config, :dev)
+      error = assert_raise Gate.Error, fn -> check(env, [{"static", "bash cmd.sh green"}]) end
+      assert error.message =~ ~s("pool": ["gate-1","gate-2"])
     end
   end
 
   describe "leased from Fleet" do
-    @describetag gate: %{"pool" => "exe"}
-
-    setup do
-      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
-    end
-
-    test "each part on a host the fleet leases as one frees; each given back with its result",
-         env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
-
-      {status, _out, err} =
-        check(env, [
-          {"static", "bash cmd.sh green"},
-          {"test-1", "bash cmd.sh red"},
-          {"test-2", "bash cmd.sh green"}
-        ])
-
-      assert status == 1, err
-      assert err =~ "as 3 parts on exe.dev"
-      released = Gate.FakeFleet.released(fleet)
-      assert Enum.sort(Enum.map(released, &elem(&1, 1))) == ~w(green green red)
-      [row] = Fake.rows(env.logs)
-      assert row =~ ~r/\ttest-2:\d+:gate-[12]:green/
-      Gate.FakeFleet.stop(fleet)
-    end
-
     test "a part waiting for a lease when rigd restarts asks the new Fleet, and keeps its gate",
          env do
-      fleet = Gate.FakeFleet.start([])
-      path = Gate.FakeFleet.path(fleet)
+      fleet = Fake.fleet([])
+      path = FakeFleet.path(fleet)
       me = self()
 
       spawn_link(fn ->
-        until(fn -> Gate.FakeFleet.waiting(fleet) == 1 end)
-        Gate.FakeFleet.stop(fleet)
+        until(fn -> FakeFleet.waiting(fleet) == 1 end)
+        FakeFleet.stop(fleet)
         Process.sleep(300)
-        send(me, {:fleet, Gate.FakeFleet.start(~w(gate-1), path)})
+        send(me, {:fleet, FakeFleet.start([vm(1)], path)})
       end)
 
       {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
       assert status == 0, err
       assert_received {:fleet, again}
-      assert Gate.FakeFleet.released(again) == [{"gate-1", "green"}]
-      Gate.FakeFleet.stop(again)
+      assert FakeFleet.released(again) == [{vm(1), "green"}]
+      FakeFleet.stop(again)
     end
 
     test "a part whose Fleet does not come back within the reconnect time has no verdict",
          env do
       System.put_env("GATE_FLEET_RECONNECT", "1")
       on_exit(fn -> System.delete_env("GATE_FLEET_RECONNECT") end)
-      fleet = Gate.FakeFleet.start([])
+      fleet = Fake.fleet([])
 
       spawn_link(fn ->
-        until(fn -> Gate.FakeFleet.waiting(fleet) == 1 end)
-        Gate.FakeFleet.stop(fleet)
+        until(fn -> FakeFleet.waiting(fleet) == 1 end)
+        FakeFleet.stop(fleet)
       end)
 
       assert_raise Gate.Error, ~r/rigd's Fleet went mid-gate/, fn ->
@@ -685,33 +428,7 @@ defmodule Gate.CheckTest do
       end
     end
 
-    test "a crashed part is given back as crashed and reruns on the next Sprite leased", env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
-      {status, _out, err} = check(env, [{"static", "bash cmd.sh crash-once"}])
-      assert status == 0, err
-      assert [{first, "crashed"}, {second, "green"}] = Gate.FakeFleet.released(fleet)
-      assert {first, second} == {"gate-1", "gate-2"}
-      [row] = Fake.rows(env.logs)
-      assert row =~ ":gate-2:green:reran-from-gate-1"
-      Gate.FakeFleet.stop(fleet)
-    end
-
-    test "a part whose Sprite restarted keeps its lease and is relaunched there; restarted again, it is given back as restarted",
-         env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
-      {status, _out, err} = check(env, [{"static", "bash cmd.sh restart-once"}])
-      assert status == 0, err
-      assert [{"gate-1", "green"}] = Gate.FakeFleet.released(fleet)
-
-      {status, _out, err} = check(env, [{"static", "bash cmd.sh restarts 2"}])
-      assert status == 0, err
-      assert [_, {first, "restarted"}, {second, "green"}] = Gate.FakeFleet.released(fleet)
-      assert first != second
-      Gate.FakeFleet.stop(fleet)
-    end
-
     @tag gate: %{
-           "pool" => "exe",
            "limits" => %{
              "poll" => 0.1,
              "run" => 20,
@@ -722,22 +439,32 @@ defmodule Gate.CheckTest do
          }
     test "an upload that outlasts its limit is the laptop's link: given back as restarted, not failed",
          env do
-      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
-      File.write!(Path.join(env.root, "gate-1/slow-stage"), "3")
+      fleet = Fake.fleet([vm(1), vm(2)])
+      File.write!(Path.join(env.root, "vm-1.exe.xyz/slow-stage"), "3")
       {status, _out, err} = check(env, [{"static", "bash cmd.sh green"}])
       assert status == 0, err
       assert err =~ "the upload outlasted 1 s"
-      assert [{"gate-1", "restarted"}, {"gate-2", "green"}] = Gate.FakeFleet.released(fleet)
-      Gate.FakeFleet.stop(fleet)
+
+      assert [{"vm-1.exe.xyz", "restarted"}, {"vm-2.exe.xyz", "green"}] =
+               FakeFleet.released(fleet)
     end
 
     test "no verdict when rigd's Fleet does not answer", env do
       System.put_env("GATE_FLEET_SOCKET", "/nonexistent/fleet.sock")
+      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
       Fake.parts(env.top, [{"static", "bash cmd.sh green"}])
 
       assert_raise Gate.Error, ~r/Fleet does not answer/, fn ->
         Gate.Check.main(Fake.config(env.top), [])
       end
+    end
+  end
+
+  defp wait_until(fun, tries \\ 200) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> flunk("never happened")
+      true -> Process.sleep(100) && wait_until(fun, tries - 1)
     end
   end
 end

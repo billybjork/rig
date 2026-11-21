@@ -1,23 +1,20 @@
 defmodule Gate.Config do
   @moduledoc """
   A project's `.gate.json`, at the root of its checkout: what its gate
-  runs where. Everything else (the runner, the Sprite side, the lock) is
-  rig's.
+  runs. Everything else (the runner, the host side, the VMs) is rig's.
 
-    * `name`: the project; its tree on a Sprite is `~/<name>`, its stamp
+    * `name`: the project; its tree on a VM is `~/<name>`, its stamp
       `~/<name>-stamp`, its environment `~/<name>-env.sh`.
-    * `pool`: `"exe"`: exe.dev, each part on a fresh copy of the golden VM
-      that rigd's `Fleet` leases (rig's EXE.md, step 3). Or the gate's own
-      Sprites; the last is the spare. (`"fleet"`, the shared Sprite pool,
-      was retired on 2026-11-21; `gate check` refuses it.) `dev`: the Sprites
-      `gate run` uses, never in the pool.
-    * `logs`: where each part's log and `check-remote.tsv` go; `locks`:
-      where the pool's and each dev Sprite's lock files are.
+    * `pool`: `"exe"`, the one there is: each part on a fresh copy of the
+      golden exe.dev VM that rigd's `Fleet` leases (rig's EXE.md). A
+      commit that names another (a Sprite pool, or `"fleet"`, the shared
+      one) predates the move; `exe!/1` refuses it.
+    * `logs`: where each part's log and `check-remote.tsv` go.
     * `parts`: a command, run in the checkout with the tier as its last
       argument, printing one `name<TAB>command` line per part.
     * `stamp`: the files whose hash is the provision stamp, in order.
-      `provision`: the provision script and its arguments, run on the
-      Sprite from the checkout as `bash <script> <stamp> <args...>`.
+      `provision`: the provision script and its arguments, run on the VM
+      from the checkout as `bash <script> <stamp> <args...>`.
     * `image`: instead of `stamp` and `provision`, the project's pin files
       (its `.tool-versions` first) for rig's one gate image
       (`image/provision.sh`), which every project uses;
@@ -25,39 +22,32 @@ defmodule Gate.Config do
     * `setup`: the script that readies a checked-out tree before each part
       (databases, deps, Node trees).
     * `keep`: the paths `git clean` keeps between parts (build caches).
-    * `local`: what a part keeps on the Sprite's local disk rather than its
-      slow root disk (`sprite/local.sh`): `paths` (in the checkout, each one
-      also in `keep`, or `~/<path>`) and `tools` (names under `/opt/gate`
-      on the project's PATH, such as `swift`), most important first.
     * `warm`: caches built before a part, outside its limit, when their
       key changes: `name`, `parts` (globs of part names), `key` (files),
-      `command`.
-    * `provision_gate`: the commands a Sprite must pass before
-      `gate pool provision` checkpoints it.
+      `command`. The golden holds each, built at `origin/main`.
     * `weights`: the file `gate times` writes.
-    * `limits`: seconds for each phase (`setup`, `warm`, `run`), for a
-      Sprite to stay unreachable (`unreachable`), for the upload (`stage`)
-      and the launch (`launch`), and between polls (`poll`).
+    * `limits`: seconds for each phase (`setup`, `warm`, `run`), for a VM
+      to stay unreachable (`unreachable`), for the upload (`stage`) and
+      the launch (`launch`), and between polls (`poll`).
+
+  Keys of the Sprite backend (`dev`, `local`, `locks`, `provision_gate`)
+  are ignored.
   """
 
-  @enforce_keys [:top, :name, :pool, :logs, :locks, :parts, :setup]
+  @enforce_keys [:top, :name, :pool, :logs, :parts, :setup]
   defstruct [
     :top,
     :name,
     :pool,
     :logs,
-    :locks,
     :parts,
     :stamp,
     :provision,
     :image,
     :setup,
     :weights,
-    dev: [],
     keep: [],
-    local: %{},
     warm: [],
-    provision_gate: [],
     limits: %{}
   ]
 
@@ -77,7 +67,7 @@ defmodule Gate.Config do
     json =
       case File.read(path) do
         {:ok, text} -> JSON.decode!(text)
-        {:error, _} -> raise Gate.Error, "#{path} is missing: this checkout has no Sprite gate"
+        {:error, _} -> raise Gate.Error, "#{path} is missing: this checkout has no gate"
       end
 
     from_json(top, json, path)
@@ -96,9 +86,7 @@ defmodule Gate.Config do
       top: top,
       name: fetch!(json, "name", path),
       pool: fetch!(json, "pool", path),
-      dev: Map.get(json, "dev", []),
       logs: json |> fetch!("logs", path) |> Path.expand(),
-      locks: json |> fetch!("locks", path) |> Path.expand(),
       parts: fetch!(json, "parts", path),
       image: Map.get(json, "image"),
       stamp: if(json["image"], do: json["image"], else: fetch!(json, "stamp", path)),
@@ -106,24 +94,23 @@ defmodule Gate.Config do
         if(json["image"], do: ["@image" | json["image"]], else: fetch!(json, "provision", path)),
       setup: fetch!(json, "setup", path),
       keep: Map.get(json, "keep", []),
-      local: local!(json, path),
       warm: Map.get(json, "warm", []),
-      provision_gate: Map.get(json, "provision_gate", []),
       weights: Map.get(json, "weights"),
       limits: Map.merge(@limits, Map.get(json, "limits", %{}))
     }
   end
 
-  # `git clean` would empty a checkout's path it does not keep, and that path
-  # is then the local copy.
-  defp local!(json, path) do
-    local = Map.get(json, "local", %{})
-    keep = Map.get(json, "keep", [])
+  @doc """
+  Raises unless the project gates on exe.dev: a commit whose `.gate.json`
+  names a Sprite pool (a list) or the shared one (`"fleet"`) predates the
+  move, and the Sprites are gone.
+  """
+  def exe!(%__MODULE__{pool: "exe"}), do: :ok
 
-    case Enum.reject(Map.get(local, "paths", []), &(String.starts_with?(&1, "~/") or &1 in keep)) do
-      [] -> local
-      paths -> raise Gate.Error, "#{path}: local paths not in keep: #{Enum.join(paths, ", ")}"
-    end
+  def exe!(%__MODULE__{pool: pool}) do
+    raise Gate.Error,
+          "the Sprites are gone (2026-11-21; rig's EXE.md): this commit's .gate.json says " <>
+            "\"pool\": #{JSON.encode!(pool)}; rebase onto origin/main, which gates on exe.dev"
   end
 
   @doc "A limit in milliseconds."
@@ -135,8 +122,4 @@ defmodule Gate.Config do
       :error -> raise Gate.Error, "#{path} has no #{inspect(key)}"
     end
   end
-end
-
-defmodule Gate.Error do
-  defexception [:message]
 end

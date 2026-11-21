@@ -248,11 +248,8 @@ and rigd's Sprite side of `Fleet` (`Rigd.Fleet`, `Fleet.Sprite`,
 `Fleet.CLI`, the nightly restore) is removed; `Fleet` is now
 `Rigd.Fleet.Exe` and the socket. A `"pool": "fleet"` gate (a branch cut
 before its project moved) is refused by `gate check` and by `Fleet`,
-saying to rebase. What stays for step 4: the Sprite backend
-(`gate/lib/gate/sprite.ex`, `sprite/*.sh`, `local.sh`) and `gate pool`,
-which `gate run` uses on the dev Sprites `soco-dev-1` and
-`heaters-dev-1`, and the `sprite` login; the workbench replaces them,
-and then they go.
+saying to rebase. The Sprite backend and `gate pool` stayed for the dev
+Sprites until step 4's workbench replaced them.
 
 ### 4. The workbench
 
@@ -286,7 +283,7 @@ each heaters test part red since (check-fast at 04:45 and 04:53).
 <format>` so the unsynced one was remade. A remade golden is a copy of
 the old one, so it kept the empty files; mix does not rebuild a module
 whose .beam alone is missing, so a part now drops the build of any app
-holding an empty .beam before setup (`sprite/job.sh`; heaters' test
+holding an empty .beam before setup (now `gate/exe/job.sh`; heaters' test
 build recompiles in about 100 s), and format 3 remade the golden on
 that. That golden then lacked heaters' test build altogether, since
 `gate golden` skipped a warm cache whose key was current, so a golden
@@ -294,24 +291,25 @@ run now builds each warm cache anyway (on a current PLT, a compile and
 a check; format 4).
 
 Live 2026-11-21: heaters' `just run-remote` since #874 (its gate green
-on the repaired copies). soco's `tooling/run-remote.sh` is committed on
-`claude/run-remote` (`163150c46`, worktree
-`soco/.worktrees/claude-run-remote`; it also drops `tooling/gate-pool.sh`
-and `soco-dev-1`) and waits, on Billy's call, until soco deploys again:
-it edits `tooling/railway-service.json`, so it needs `railway-settings.sh
-apply social-objects` before its ship, and soco's rolls fail on an
-unrelated migration. `gate run` already goes to exe.dev for soco, since
-its `.gate.json` says `"pool": "exe"`. The dev Sprites `soco-dev-1` and
-`heaters-dev-1` are destroyed (Billy's go); Fly holds no Sprite.
+on the repaired copies), soco's `tooling/run-remote.sh` since #903
+(`96699fe4`, after soco's deploys worked again; it also dropped
+`tooling/gate-pool.sh` and `soco-dev-1`). The dev Sprites `soco-dev-1`
+and `heaters-dev-1` are destroyed (Billy's go); Fly holds no Sprite.
 
-Left of step 4: the Sprite backend comes out of `gate/` in its own
-change: `lib/gate/sprite.ex` (its helpers that `Gate.Exe` borrows move
-to it), `sprite/launch.sh` and `local.sh` (and `job.sh`'s local-disk
-calls), `gate pool` and `lib/gate/pool.ex`, the Sprite branches of
-`Gate.Host`, `Gate.Run`, `Gate.Check` (a list `pool`, the spare) and
-`Gate.Engine` (free Sprites, the keeper), `.gate.json`'s `dev` and
-`local`, and the tests' fake `sprite` CLI (onto the fake `ssh`). Then
-the `sprite` CLI and its login can go from the laptop.
+The Sprite backend is out of `gate/` (2026-11-21): `lib/gate/sprite.ex`,
+`pool.ex` and `host.ex`, `sprite/launch.sh` and `local.sh`, `gate pool`,
+`gate lock` and `libexec/lock`, the spare, the keeper and the dev Sprite
+in `Gate.Engine`, `Gate.Check` and `Gate.Run`, and `.gate.json`'s `dev`,
+`local`, `locks` and `provision_gate` (ignored now). `job.sh`, `stage.sh`
+and `poll.sh` moved to `gate/exe/` beside `launch.sh`; `Gate.Exe` holds
+what it borrowed. A `.gate.json` naming a Sprite pool is refused, saying
+to rebase. The log keeps its `sprite-gate:` prefix (the ship worker's
+contract), and the tsv its `sprite-failed`. The ship worker no longer
+needs the `sprite` CLI (it checks for rigd's Fleet socket instead), so
+the CLI and its login can go from the laptop; Rex's "Sprites" palette
+actions are gone too.
+
+Step 4 done 2026-11-21.
 
 ### 5. Later (not urgent, Billy)
 

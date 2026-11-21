@@ -1,12 +1,11 @@
 defmodule Gate.Lease do
   @moduledoc """
-  An exe.dev VM leased from rigd's `Fleet` (`.gate.json`'s `"pool":
-  "exe"`), on its socket (`$GATE_FLEET_SOCKET`, else
+  An exe.dev VM leased from rigd's `Fleet`, on its socket (`$GATE_FLEET_SOCKET`, else
   `~/Library/Caches/rigd/fleet.sock`). Each lease is a process holding
   its own connection, linked to the gate: a gate that dies closes it, and
   `Fleet` removes the VM, which ends that part. The process tells its
-  owner `{:fleet_granted, key, sprite, pid}` once a VM is leased, or `{:fleet_lost, key, why}` when the
-  connection went first and `Fleet` did not come back within
+  owner `{:fleet_granted, key, host, pid}` once a VM is leased, or
+  `{:fleet_lost, key, why}` when the connection went first and `Fleet` did not come back within
   `reconnect/0` (5 minutes): `bin/rigd install` drains Fleet and restarts
   rigd, and a waiter that connects again keeps its gate. A lease lost
   after its grant is not asked for again: its part ran on a VM that
@@ -29,12 +28,11 @@ defmodule Gate.Lease do
   end
 
   @doc """
-  Asks for a Sprite for `project`'s part `part`; returns the lease's pid.
-  A ship worker's gate (`SHIPYARD_STATUS_ID` set) asks as `ship`, ahead of
-  every session's own gate. `opts`: `pool` (`"exe"` asks for an exe.dev
-  VM, granted as `<vm>.exe.xyz`) and `warm`, the keys of the warm caches
-  the part needs: on exe.dev a key the golden VM lacks gets a bigger VM,
-  since soco's cold dialyzer PLT needs 16 GB (EXE.md, check 0d).
+  Asks for a VM (granted as `<vm>.exe.xyz`) for `project`'s part `part`;
+  returns the lease's pid. A ship worker's gate (`SHIPYARD_STATUS_ID` set)
+  asks as `ship`, ahead of every session's own gate. `opts`: `warm`, the
+  keys of the warm caches the part needs: a key the golden VM lacks gets a
+  bigger VM, since soco's cold dialyzer PLT needs 16 GB (EXE.md, check 0d).
   """
   def request(project, part, key, opts \\ []) do
     owner = self()
@@ -44,17 +42,18 @@ defmodule Gate.Lease do
 
   @doc false
   def message(project, part, opts) do
-    lease = %{project: project, part: part, priority: priority()}
-
-    lease =
-      if opts[:pool] == "exe",
-        do: Map.merge(lease, %{pool: "exe", warm: opts[:warm] || []}),
-        else: lease
-
-    %{lease: lease}
+    %{
+      lease: %{
+        project: project,
+        part: part,
+        priority: priority(),
+        pool: "exe",
+        warm: opts[:warm] || []
+      }
+    }
   end
 
-  @doc "Gives the Sprite back with the part's `result`: green, red, restarted, failed or crashed."
+  @doc "Gives the VM back with the part's `result`: green, red, restarted, failed or crashed."
   def release(pid, result) do
     ref = Process.monitor(pid)
     send(pid, {:release, result})
@@ -81,12 +80,13 @@ defmodule Gate.Lease do
     with {:ok, sock} <- connect(),
          :ok <- send_line(sock, msg),
          {:ok, line} <- :gen_tcp.recv(sock, 0),
-         %{"granted" => sprite} <- JSON.decode!(line) do
-      send(owner, {:fleet_granted, key, sprite, self()})
+         %{"granted" => host} <- JSON.decode!(line) do
+      send(owner, {:fleet_granted, key, host, self()})
 
       receive do
         {:release, result} ->
-          send_line(sock, %{release: %{sprite: sprite, result: result}})
+          # `sprite`: Fleet's word for the leased host, from before exe.dev.
+          send_line(sock, %{release: %{sprite: host, result: result}})
           :gen_tcp.recv(sock, 0, 30_000)
           :gen_tcp.close(sock)
       end

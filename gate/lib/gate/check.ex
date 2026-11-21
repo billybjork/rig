@@ -1,21 +1,18 @@
 defmodule Gate.Check do
   @moduledoc """
   `gate check [tier]`: the split gate on HEAD. Its parts (the project's
-  `parts` command) run at once, one Sprite each from the pool, and the
-  pool's last Sprite is the spare (`Gate.Engine` says when a part reruns,
-  there or on a Sprite whose own part has ended). On exe.dev (`"pool":
-  "exe"`), each part runs on a fresh copy of the golden VM that rigd's
-  `Fleet` leases, and reruns on another. The shared Sprite pool (`"pool":
-  "fleet"`) was retired on 2026-11-21, and a commit that still names it is
-  refused. The gate is green when every part is.
+  `parts` command) run at once, each on a fresh copy of the golden exe.dev
+  VM that rigd's `Fleet` leases (`Gate.Engine` says when a part reruns, on
+  the next VM leased). The gate is green when every part is. A commit
+  whose `.gate.json` names a Sprite pool is refused (`Gate.Config.exe!/1`).
 
   The contract the ship worker reads (rig's shipyard/README.md, "A
   project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
-  stdout, 2 no verdict (a part's Sprite failed and no Sprite could rerun
-  it); one row per run in `<logs>/check-remote.tsv`: when, sha,
-  tier, verdict, wall seconds, then each part as
-  `name:seconds:sprite:result`, with `:reran-from-<sprite>` on a part that
-  reran. Progress goes to stderr, and each part reports to
+  stdout, 2 no verdict (a part's VM failed, and its rerun's too); one row
+  per run in `<logs>/check-remote.tsv`: when, sha, tier, verdict, wall
+  seconds, then each part as `name:seconds:<vm>:result` (`sprite-failed`
+  for a VM that failed it, the row's old word), with `:reran-from-<vm>` on
+  a part that reran. Progress goes to stderr, and each part reports to
   Rex's program status as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
   """
 
@@ -31,31 +28,12 @@ defmodule Gate.Check do
     if git!(config, ["status", "--porcelain", "--untracked-files=no"]) != "",
       do: say.("the tree has uncommitted changes; the gate runs on the commit, #{short(sha)}")
 
+    Config.exe!(config)
     parts = parts(config, tier)
     n = length(parts)
-    pool = config.pool
-    fleet = pool == "exe"
-
-    if pool == "fleet",
-      do:
-        raise(
-          Gate.Error,
-          "the shared Sprite pool is retired (2026-11-21; rig's EXE.md): this commit's " <>
-            ".gate.json says \"pool\": \"fleet\"; rebase onto origin/main, which gates on exe.dev"
-        )
-
     if n == 0, do: raise(Gate.Error, "the parts command named no part for #{tier}")
-    if fleet, do: Gate.Lease.check!()
-
-    if not fleet and n >= length(pool),
-      do:
-        raise(
-          Gate.Error,
-          "#{n} parts need #{n + 1} Sprites with the spare; the pool has #{length(pool)}"
-        )
-
+    Gate.Lease.check!()
     stamp = Stamp.stamp(config, sha)
-    spare = if not fleet, do: List.last(pool)
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> short(sha)
     root = System.get_env("SHIPYARD_STATUS_ID", "gate")
     work = Path.join(System.tmp_dir!(), "gate-#{run}-#{System.unique_integer([:positive])}")
@@ -66,7 +44,6 @@ defmodule Gate.Check do
       stamp: stamp,
       run: run,
       work: work,
-      spare: spare,
       say: say,
       report: fn part, state, message ->
         Status.report(state, "#{root}/#{part.job.name}", message, part.job.name)
@@ -74,23 +51,15 @@ defmodule Gate.Check do
     }
 
     subject = git!(config, ["log", "-1", "--format=%s", "HEAD"])
-    used = if fleet, do: List.duplicate(:lease, n), else: Enum.take(pool, n)
-
-    say.(
-      "#{short(sha)} (#{subject}): #{tier} as #{n} parts " <>
-        if(fleet,
-          do: "on exe.dev",
-          else: "on #{Enum.join(used, " ")}, spare #{spare}"
-        )
-    )
+    say.("#{short(sha)} (#{subject}): #{tier} as #{n} parts on exe.dev")
 
     jobs =
-      for {{name, command}, sprite} <- Enum.zip(parts, used) do
+      for {name, command} <- parts do
         {%Engine.Job{
            name: name,
            argv: String.split(command),
            warm: warms(config, sha, stamp, name)
-         }, sprite}
+         }, :lease}
       end
 
     t0 = System.monotonic_time(:second)
@@ -126,13 +95,13 @@ defmodule Gate.Check do
       per = div(@digest_lines - length(reds), length(reds))
 
       for r <- reds do
-        IO.puts("== #{r.name} on #{r.sprite} (exit #{r.rc}): #{r.log}")
+        IO.puts("== #{r.name} on #{r.host} (exit #{r.rc}): #{r.log}")
         Enum.each(Digest.lines(r.log, per), &IO.puts/1)
       end
     end
 
     spent =
-      case for(r <- results, r.reran_from, do: "#{r.name} on #{r.sprite}") do
+      case for(r <- results, r.reran_from, do: "#{r.name} on #{r.host}") do
         [] -> ""
         reruns -> " (reran #{Enum.join(reruns, ", ")})"
       end
@@ -148,7 +117,7 @@ defmodule Gate.Check do
 
       "none" ->
         say.(
-          "no verdict after #{wall} s: a part's Sprite failed and no Sprite could rerun it (gate pool status)"
+          "no verdict after #{wall} s: a part's VM failed, and its rerun's too (bin/rigd fleet)"
         )
 
         2
@@ -158,7 +127,7 @@ defmodule Gate.Check do
   defp row_part(r) do
     result = if r.result == :sprite_failed, do: "sprite-failed", else: to_string(r.result)
     reran = if r.reran_from, do: ":reran-from-#{r.reran_from}", else: ""
-    "#{r.name}:#{r.secs}:#{r.sprite}:#{result}#{reran}"
+    "#{r.name}:#{r.secs}:#{r.host}:#{result}#{reran}"
   end
 
   @doc "The project's parts for `tier`, `[{name, command}]`."
@@ -170,7 +139,7 @@ defmodule Gate.Check do
             do: {name, command}
 
       {out, status} ->
-        raise Gate.Error, "the parts command exited #{status}: #{Gate.Sprite.last_line(out)}"
+        raise Gate.Error, "the parts command exited #{status}: #{Gate.last_line(out)}"
     end
   end
 

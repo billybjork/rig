@@ -1,20 +1,20 @@
 # gate
 
-The gate runner every project in `~/dev` shares: a project's split gate,
-its ad-hoc runs and its pool of Fly Sprites. A project keeps what is its
-own in `.gate.json` at its root (`lib/gate/config.ex` names each field):
-its Sprites, its parts (a command printing `name<TAB>command` lines), its
-provision script and the files whose hash is its stamp, the setup script
-that readies a checkout before each part, the build caches `git clean`
-keeps, and the caches to warm before a part. Its own scripts
-(`check-remote.sh`, `run-remote.sh`, `gate-times.sh`) are one-line
-wrappers around `bin/gate`.
+The gate runner every project in `~/dev` shares: a project's split gate
+and its ad-hoc runs, each part on its own exe.dev VM (rig's `EXE.md`). A
+project keeps what is its own in `.gate.json` at its root
+(`lib/gate/config.ex` names each field): its parts (a command printing
+`name<TAB>command` lines), its provision script and the files whose hash
+is its stamp (or rig's one image and its pins), the setup script that
+readies a checkout before each part, the build caches `git clean` keeps,
+and the caches to warm before a part. Its own scripts (`check-remote.sh`,
+`run-remote.sh`, `gate-times.sh`) are one-line wrappers around `bin/gate`.
 
 ```sh
 gate check [tier]            # the split gate on HEAD, a fresh exe.dev VM per part
 gate run <command...>        # the workbench: a command on the working tree, on its own VM
-gate pool status|provision <s>|rebuild <s>|exec <s> <cmd...>|warm [s...]
-gate golden <host>           # set one Sprite or exe.dev VM up and warm its caches
+gate keys <rev>              # what a golden made at <rev> holds: the stamp, each warm key
+gate golden <vm>.exe.xyz     # set a golden VM up and warm its caches (rigd's Fleet runs it)
 gate times                   # rewrite the suite's partition weights
 gate stamp [rev]             # HEAD's (or rev's) provision stamp
 gate self-check              # this runner's gate (compile, format, tests)
@@ -28,144 +28,95 @@ compiles it when it changed.
 
 ## How a part runs
 
-What the Sprites taught (`~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`,
-and the probes of 2026-10-28):
+Each part runs on a VM that rigd's `Fleet` leases (`lib/gate/lease.ex`,
+on `~/Library/Caches/rigd/fleet.sock`): a fresh `cp` of the golden VM,
+behind every ship's part when a session asks, removed as the part ends.
+Every call to it is one plain `ssh <vm>.exe.xyz` (`lib/gate/exe.ex`)
+under `libexec/deadline`, which holds it to its limit from outside, in
+its own process group: TERM, then KILL. No call streams a part's output.
+exe's SSH logs in as root, and a part runs as `gate` in a login shell
+(`su - gate -c`), whose profile puts Python 3.13 first (`exe/base.sh`);
+every VM presents exe's one host key, pinned in `exe/known_hosts` (for a
+manual ssh, pass `-o UserKnownHostsFile=~/dev/rig/gate/exe/known_hosts`).
 
-- A long `sprite exec` stream dies with "connection closed", taking its
-  part with it. So no part streams: every `sprite` call is short.
-- The `sprite` CLI ignores SIGALRM, and SIGTERM for 5 s and more. So every
-  call runs under `libexec/deadline`, which holds it to its limit from
-  outside, in its own process group: TERM, then KILL.
-- A Sprite pauses within seconds once no exec session is attached, freezing
-  whatever runs there, and a non-TTY session suspends when its client goes.
-  Polling does not keep it awake (the job ran only while each poll's exec
-  was attached). A TTY session runs on after its client detaches and, while
-  it prints, keeps the Sprite awake.
+So a part, on its VM:
 
-So a part, on its Sprite:
-
-1. **Stage** (a non-TTY exec, the tar on stdin; `sprite/stage.sh`): ends
-   whatever an earlier part left, and unpacks the job, its vars and argv,
-   and the git bundle that brings the Sprite to the commit (only the
-   commits it lacks: since its last tip when this checkout has it, else
-   since the newest of HEAD's first parents it holds; the whole history,
-   about 300 MB for soco, only to a Sprite holding none). The part's log
-   says `gate: uploaded <MB> in <s>`. An upload that outlasts `stage` is
-   the laptop's link, not the Sprite: a big one tries once more with twice
+1. **Stage** (the tar on stdin; `exe/stage.sh`): first `exe/base.sh boot`
+   as root (exe-init is PID 1, with no systemd, so a fresh copy or a
+   restarted VM lacks `/dev/fd`, and process substitution fails without
+   it); then it ends whatever an earlier part left, and unpacks the job,
+   its vars and argv, and the git bundle that brings the VM to the commit
+   (only the commits it lacks: since its last tip when this checkout has
+   it, else since the newest of HEAD's first parents it holds; the whole
+   history, about 300 MB for soco, only to a VM holding none). The part's
+   log says `gate: uploaded <MB> in <s>`. An upload that outlasts `stage`
+   is the laptop's link, not the VM: a big one tries once more with twice
    the time, then reruns as `restarted`, no strike.
-2. **Launch** (a TTY exec under `script`, since the ship worker's gate has
-   no terminal; `sprite/launch.sh`): starts `sprite/job.sh` in a session of
-   its own, writing `~/parts/<id>/log`, then prints a keepalive until the
-   job ends. The laptop drops the client once it reads `gate-launched
-   <life>`.
-3. **The job** (`sprite/job.sh`): checks out the commit (keeping the build
+2. **Launch** (`exe/launch.sh`, after the boot step): starts `exe/job.sh`
+   in a session of its own, writing `~/parts/<id>/log`, prints
+   `gate-launched <life>` and returns. The VM runs on with nobody
+   connected.
+3. **The job** (`exe/job.sh`): turns on 4 GiB of swap
+   (`/var/tmp/gate-swap`), checks out the commit (keeping the build
    caches), lays `gate run`'s working tree over it, runs the commit's
-   provision script when the Sprite's stamp is not the commit's (a
-   toolchain bump refreshes each Sprite on its first part), runs the
-   project's setup, builds each warm cache whose key changed (the
-   dialyzer PLT, keyed by `mix.lock`, `.tool-versions` and the stamp), and
-   runs the command with core dumps on (`~/cores`, the newest three kept).
-   It writes its phase (`setup`, `warm`, `run`) and, at the end, its status
-   to files; a core the command left is named in the part's log
-   (`sprite-gate: core <file> (<program>)`), with its stack where the
-   Sprite has gdb.
-4. **Polls** (`sprite/poll.sh`, every 10 s, one call at a time so parallel
-   CLI calls cannot tear `~/.sprites/sprites.json`): the phase, the status,
-   the Sprite's life (boot id and PID 1's start), whether the job and its
-   keeper run, and the log's new bytes, appended to the part's log here.
+   provision script when the VM's stamp is not the commit's (a toolchain
+   bump refreshes a copy of the older golden until `Fleet` makes a new
+   one), drops an app build that a host dying mid-compile, or a golden
+   paused unsynced, left broken, runs the project's setup, builds each
+   warm cache whose key changed (the dialyzer PLT, keyed by its files, the
+   stamp and its command), and runs the command with core dumps on
+   (`~/cores`, the newest three kept). It writes its phase (`setup`,
+   `warm`, `run`) and, at the end, its status to files; a core the
+   command left is named in the part's log (`sprite-gate: core <file>
+   (<program>)`), with its stack where the VM has gdb.
+4. **Polls** (`exe/poll.sh`, every 10 s, one call at a time): the phase,
+   the status, the VM's life (boot id and PID 1's start), whether the job
+   runs, and the log's new bytes, appended to the part's log here.
 
 The laptop holds each phase to its own limit (setup 30 min, warm 45, run
 25, per `.gate.json`'s `limits`), so a provision or a cold PLT never counts
-against the command. A part's Sprite failed when the upload or launch
-fails, a phase outlasts its limit (the part is ended there), the life
-changes (a restart), the job ends outside `run`, or no poll gets through
-for 3 min. Such a part reruns once, as does a red part whose log shows a
-native crash (`Gate.Engine.crashed?/1`): on the pool's last Sprite, the
-spare, while it is unused, and otherwise on the first Sprite whose own part
-ends green or red (one that failed or crashed takes nothing more that run).
-A Sprite's memory loses a write now and then (soco's Node segfaults,
-2026-10), so a bad Sprite costs a rerun rather than the gate. A restart
-while warming relaunches the part on the same Sprite instead, where the
-half-built cache is. A keeper that dies is relaunched. A gate stopped
-from outside (a closed terminal, the worker's alarm, passed on by the lock)
-ends the parts it launched.
+against the command. A part's VM failed when the upload or launch fails,
+a phase outlasts its limit (the part is ended there), the life changes (a
+restart), the job ends outside `run`, or no poll gets through for 3 min.
+A restart relaunches the part once on the same VM, where its caches are
+warm (and a restart while warming, where the half-built cache is). Any
+other failure, a second restart, or a red part whose log shows a native
+crash (`Gate.Engine.crashed?/1`) gives the VM back, saying how (`failed`,
+`restarted`, `crashed`; else `green` or `red`), and reruns once on the
+next VM `Fleet` leases. A rerun that fails too leaves no verdict, as does
+`Fleet` going mid-gate for more than 5 minutes (a `bin/rigd install`
+drains it, and a waiting part connects again); with rigd down, `gate
+check` exits 2. A gate stopped from outside (a closed terminal, the
+worker's alarm) ends the parts it launched.
 
-## On exe.dev
+No gate takes a lock: a session's own `gate check` and a ship's run side
+by side, and a ship's parts (`SHIPYARD_STATUS_ID` set) lease ahead of
+every session's (2026-11-16: a session's gate held soco's worker for 19
+minutes). The projects keep their own `gate-lock.sh` for the laptop's
+machine lock.
 
-A host named `<vm>.exe.xyz` is an exe.dev VM (`lib/gate/exe.ex`, chosen by
-`lib/gate/host.ex`; rig's `EXE.md`), and every other a Sprite. The part is
-the same (the same tar, `sprite/job.sh`, `sprite/stage.sh` and
-`sprite/poll.sh`), carried by plain `ssh` calls under `libexec/deadline`.
-What differs:
-
-- exe's SSH logs in as root, and a part runs as `gate` in a login shell
-  (`su - gate -c`), whose profile puts Python 3.13 first (`exe/base.sh`).
-- The stage and the launch first run `exe/base.sh boot` as root: exe-init is
-  PID 1, with no systemd, so a fresh copy or a restarted VM lacks
-  `/dev/fd`, and process substitution fails without it.
-- The launch (`exe/launch.sh`) starts the job detached and returns: the VM
-  runs on with nobody connected, so there is no keeper and no TTY.
-- No local disk (the one disk is local NVMe), and the job's 4 GiB of swap
-  is a plain file (`/var/tmp/gate-swap`), not a loop device.
+## The golden
 
 `gate golden <vm>.exe.xyz`, run in a project's checkout, readies a golden
-VM as it does a Sprite. A project whose `.gate.json` says `"pool": "exe"`
-gates on fresh copies of the golden that rigd's `Fleet` leases, one per
-part, removed as each part ends (`FLEET.md`, "On exe.dev"); `gate keys
-<rev>` prints what a golden made at `<rev>` holds, which `Fleet` compares
-with the golden's comment.
-
-## The local disk
-
-A Sprite's root disk, with `/opt/gate` and the repos on it, is Fly's SBD: a
-cache over object storage, where a 4 KB read takes 0.1 to 2 ms warm and 400
-to 1800 ms cold, and a suite's run turns warm blocks cold (2026-11-05). `/tmp`
-is a real local disk. So what a project's `.gate.json` names under `local` is
-copied there and bind-mounted over the original (`sprite/local.sh`, which has
-the rules): the same paths, read and written locally.
-
-The root disk stays the source of truth. A restart drops the mounts, a restore
-drops the project's copies (a token on each disk differs after one), a host
-move empties the local disk, and a golden runs on the root disk, since a
-checkpoint holds only that. Whatever does not copy, fit its budget or mount
-stays where it was and the part's log says `stays on the root disk`, so a part
-is never worse off than without it. `sprite-gate: local disk: ...` is its lap,
-and `sprite-health: LocalDiskFree` what a suite left free.
-
-Copying costs the first part after each of those: about 4 min for Swift (3.6
-GB) after a host move, and a minute or so for a project's own paths after a
-restore.
-
-## Leased from `Fleet`
-
-A project whose `.gate.json` says `"pool": "exe"` gates on VMs that rigd's
-`Fleet` leases (`rigd/lib/rigd/fleet/exe.ex`, "On exe.dev" above and in
-`FLEET.md`): each part, its first run and its rerun alike, waits for one
-on `~/Library/Caches/rigd/fleet.sock` (`lib/gate/lease.ex`) and gives it
-back as it ends (`green`, `red`, `failed`, `crashed`), so `gate check`
-needs no spare; with rigd down it exits 2. Such a gate holds no pool lock,
-so a session's own `gate check` and a ship's run side by side, and a
-ship's parts (`SHIPYARD_STATUS_ID` set) lease ahead of every session's
-(2026-11-16: a session's gate held soco's worker for 19 minutes, and 258
-waits in the workers' logs). `gate pool` is then not the project's.
-
-The shared Sprite pool (`"pool": "fleet"`, `rig-gate-1` to `-10`) that
-did this before was retired on 2026-11-21; `gate check` refuses a commit
-whose `.gate.json` still names it, and says to rebase.
+VM: the tools, the project's setup, and each warm cache, one short step
+at a time, each up to three tries; it runs no part. rigd's `Fleet` runs
+it for each project on a new `rig-golden-*` VM when `gate keys
+origin/main` (the stamp and each warm cache's key) no longer matches the
+golden's comment, syncs its disk, pauses it, and comments it
+(`rigd/lib/rigd/fleet/exe.ex`; `FLEET.md`, "On exe.dev").
 
 ## The workbench
 
 `gate run <command...>` (`lib/gate/run.ex`; the projects' `run-remote`)
 runs one command on HEAD with the working tree laid over it: the diff
 against HEAD and the untracked files Git does not ignore, scanned by
-gitleaks first. On a project with `"pool": "exe"` it leases its own VM
-from `Fleet` as a part does (a session's lease, behind every ship's), so
-runs share no Postgres, ports or lock; the VM is readied as a gate's
-part (checkout, setup, `local` off), the command's output streams back
-(polled every 3 s), and the VM is removed as the run ends: only the output comes back,
-not the files the command writes. A VM that
-fails reruns the command once on another. About 13 s pass before the
-command starts (lease, stage, setup).
+gitleaks first. It leases its own VM from `Fleet` as a part does (a
+session's lease, behind every ship's), so runs share no Postgres, ports
+or lock; the VM is readied as a gate's part (checkout, setup), the
+command's output streams back (polled every 3 s), and the VM is removed
+as the run ends: only the output comes back, not the files the command
+writes. A VM that fails reruns the command once on another. About 13 s
+pass before the command starts (lease, stage, setup).
 
 The exit status is the command's, or 125 when it could not run (`Fleet`
 down, a VM failed twice, the working tree would not lay over the commit,
@@ -175,26 +126,31 @@ shows the run as the record `gate-run`. A run needs no warm cache of its
 own: the golden's are those of `origin/main`, and a branch that changes
 `mix.lock` rebuilds what it uses on the VM.
 
+## Before exe.dev
+
+The gate began on Fly Sprites: each project's pool, then a shared one
+(`FLEET.md`), with dev Sprites for ad-hoc runs. The Sprites are gone
+(2026-11-21), and with them the Sprite backend, `gate pool`, the local
+disk and the locks. A commit whose `.gate.json` names a Sprite pool (or
+`"fleet"`, the shared one) is refused, saying to rebase; its Sprite keys
+(`dev`, `local`, `locks`, `provision_gate`) are ignored. The log lines
+keep their `sprite-gate:` and `sprite-health:` prefixes, which the ship
+worker and digests read.
+
 ## The contract
 
 `gate check` keeps the one the ship worker reads (`shipyard/README.md`, "A
 project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
-stdout, 2 no verdict; a row per run in `<logs>/check-remote.tsv`; each
-part's log as `<logs>/<sprite>-<run>-<part>.log`, whose last line is
-`sprite-gate: exit <status>` when its command ran; Rex program status per
-part as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
-
-A gate on a project's own Sprite pool and every pool command but `status`
-hold the project's pool lock, and `gate run` on a dev Sprite that
-Sprite's (`libexec/lock`, the machine gate lock's protocol on files under
-the project's `locks`), so two never share a Sprite; on exe.dev neither
-holds one. The projects keep their own `gate-lock.sh` for the machine lock:
-their suites run it on the Sprites, where there is no rig.
+stdout, 2 no verdict; a row per run in `<logs>/check-remote.tsv` (each
+part as `name:seconds:<vm>:result`, `sprite-failed` for a VM that failed
+it); each part's log as `<logs>/<vm>-<run>-<part>.log`, whose last line
+is `sprite-gate: exit <status>` when its command ran; Rex program status
+per part as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
 
 ## Testing
 
-`bin/gate self-check`. The tests run the real Sprite-side scripts against
-a fake `sprite` CLI (`test/test_helper.exs`) whose Sprites are
-directories: TTY sessions outlive their clients, a Sprite can stop
-answering or restart, and the parts' commands (`test/support/cmd.sh`)
-crash, hang, restart their Sprite or drop their keeper once.
+`bin/gate self-check`. The tests run the real host-side scripts (`exe/`)
+on fake exe.dev VMs that are directories, reached by a fake `ssh` and `su`
+and leased by a fake `Fleet` (`test/test_helper.exs`): a VM can refuse
+ssh, stop answering, restart or upload slowly, and the parts' commands
+(`test/support/cmd.sh`) crash, hang or restart their VM once.

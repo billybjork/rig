@@ -14,9 +14,11 @@ and rigd's Sprite side of `Fleet` (`Rigd.Fleet`, `Fleet.Sprite`,
 reason. What is live is "On exe.dev" at the end. The rest of this file
 is the Sprite pool's history, kept for what it taught: why a golden only
 sets up, why reruns are host-agnostic, why ships lease first. The
-Sprite backend itself (`lib/gate/sprite.ex`) goes with the dev Sprites,
-now that the workbench (`gate run` on exe.dev, `EXE.md` step 4) replaces
-them.
+Sprite backend itself (`lib/gate/sprite.ex`, `gate pool`, the local disk)
+was removed the same day, after the dev Sprites, once the workbench
+(`gate run` on exe.dev, `EXE.md` step 4) replaced them; the files this
+history names under `sprite/` and `lib/gate/` are gone or moved to
+`exe/`.
 
 ## What exists
 
@@ -185,7 +187,7 @@ Each step lands on its own, live before the next.
 socket, when `gate/fleet.json` has `exe`. A project's `.gate.json` names
 it as `"pool": "exe"`: each part's lease (`Gate.Lease`) says `"pool":
 "exe"` and the keys of the warm caches it needs, and is granted
-`<vm>.exe.xyz`, which `Gate.Host` sends to the exe backend.
+`<vm>.exe.xyz`, where `Gate.Exe` runs the part.
 
 - **No standing pool.** A lease is a fresh copy of the golden (`ssh
   exe.dev cp <golden> rig-part-<time>-<hex> --standalone --cpu=4

@@ -1,29 +1,28 @@
 #!/bin/bash
-# On a Sprite: one part's run, `bash ~/parts/<id>/job.sh <id>`, started by
-# launch.sh in a session of its own, with its output in ~/parts/<id>/log.
-# ~/parts/<id>/vars names the project (NAME), the commit (SHA), the
-# provision stamp it wants (STAMP), the provision command (PROVISION; with
-# `@image` first, rig's image script, staged as ~/parts/<id>/image.sh), the
-# project's setup script (SETUP), the build caches `git clean` keeps (KEEP),
-# the caches to warm first (WARM_NAMES, WARM_KEYS, WARM_CMDS), and what goes
-# on the local disk (LOCAL_PATHS, LOCAL_TOOLS, or LOCAL_OFF for a golden;
-# local.sh), and the host's kind (HOST: `sprite`, or `exe` for an exe.dev
-# VM, rig's EXE.md); argv holds the command, NUL-separated.
+# On an exe.dev VM, as `gate`: one part's run, `bash ~/parts/<id>/job.sh
+# <id>`, started by launch.sh in a session of its own, with its output in
+# ~/parts/<id>/log. ~/parts/<id>/vars names the project (NAME), the commit
+# (SHA), the provision stamp it wants (STAMP), the provision command
+# (PROVISION; with `@image` first, rig's image script, staged as
+# ~/parts/<id>/image.sh), the project's setup script (SETUP), the build
+# caches `git clean` keeps (KEEP), and the caches to warm first
+# (WARM_NAMES, WARM_KEYS, WARM_CMDS; WARM_FORCE for a golden); argv holds
+# the command, NUL-separated.
 #
 # Its phases go to ~/parts/<id>/phase ("setup", "warm", "run", each with
 # the time it began), so the laptop holds each to its own limit: the
 # provision a stale stamp needs and a cold cache's build never count
 # against the command's. When it ends, ~/parts/<id>/rc holds its status.
 # The command's status is the part's only when the phase is "run" (the
-# log's last line is then "sprite-gate: exit <status>"); anything else is
-# the Sprite failing: 89 its tools would not refresh, 90 to 92 checkout and
-# setup, 125 the working tree would not lay over the commit (`gate run`).
+# log's last line is then "sprite-gate: exit <status>", the ship worker's
+# contract, named for the Sprites it began on); anything else is the VM
+# failing: 89 its tools would not refresh, 90 to 92 checkout and setup, 125
+# the working tree would not lay over the commit (`gate run`).
 set -uo pipefail
 id=${1:?usage: job.sh <id>}
 d=~/parts/$id
-NAME= SHA= STAMP= SETUP= HOST=sprite
+NAME= SHA= STAMP= SETUP= WARM_FORCE=
 KEEP=() PROVISION=() WARM_NAMES=() WARM_KEYS=() WARM_CMDS=()
-LOCAL_PATHS=() LOCAL_TOOLS=() LOCAL_OFF=
 . "$d/vars"
 cmd=()
 while IFS= read -r -d '' arg; do cmd+=("$arg"); done <"$d/argv"
@@ -39,9 +38,9 @@ finish() { # status
 exec 2>&1
 phase setup
 
-# The Sprite's life (the boot id and PID 1's start time; a Sprite can
-# restart its processes without a reboot), which the laptop compares with
-# the current one, and the host's CPU, so crashes can be grouped by host.
+# The VM's life (the boot id and PID 1's start time; a host can restart
+# its processes without a reboot), which the laptop compares with the
+# current one, and the host's CPU, so crashes can be grouped by host.
 if [ -r /proc/sys/kernel/random/boot_id ]; then
   say "life $(cat /proc/sys/kernel/random/boot_id)-$(cut -d' ' -f22 /proc/1/stat)"
   say "cpu $(awk -F'\t*: ' '$1 == "cpu family" {f = $2} $1 == "model" {m = $2} END {print "family " f " model " m}' /proc/cpuinfo)"
@@ -59,50 +58,22 @@ health() {
 beat=$!
 trap 'kill $beat 2>/dev/null' EXIT
 
-# A Sprite has 8 GiB and no swap, and a cold dialyzer PLT (soco's
-# static-1) took it down mid-build on every try (2026-10-30). 4 GiB of swap
-# on the scratch disk, through a loop device: swapon refuses a file on the
-# root's overlayfs. A restart drops it, so each part checks. Of 1576 logged
-# parts, one used 3.7 GiB and the rest at most 1.6, and the scratch disk is
-# short of room (LocalDiskFree), so it is no longer 8 (2026-11-06).
-swap_drop() { # the file, once nothing holds it
-  local loop
-  for loop in $(sudo losetup -j "$swap" | cut -d: -f1); do
-    # A Sprite's /proc/swaps names it /loop0, not /dev/loop0.
-    if grep -qE "^(/dev)?/${loop##*/} " /proc/swaps; then sudo swapoff "$loop" || return 1; fi
-    sudo losetup -d "$loop" || return 1
-  done
-  sudo rm -f "$swap"
-}
-# An exe.dev VM's disk is local ext4, where a plain swap file works.
-if [ "$HOST" = exe ] && [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
+# 4 GiB of swap, for a part that outgrows its 8 GB (a cold dialyzer PLT
+# took a Sprite down mid-build on every try, 2026-10-30). The disk is local
+# ext4, where a plain swap file works; a restart drops it, so each part
+# checks.
+if [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
   swap=/var/tmp/gate-swap
   if [ "$(wc -l </proc/swaps)" -le 1 ]; then
     { [ -f "$swap" ] || { sudo fallocate -l 4G "$swap" && sudo chmod 600 "$swap" && sudo mkswap "$swap" >/dev/null; }; } &&
       sudo swapon "$swap" && say "swap: 4 GiB in $swap" || say "swap: could not turn it on"
   fi
-elif [ -r /proc/swaps ] && sudo -n true 2>/dev/null; then
-  swap=/tmp/gate-swap
-  swap_bytes=$((4 * 1024 * 1024 * 1024))
-  # Another size is an older part's. Failing to drop it leaves it in use.
-  if [ -f "$swap" ] && [ "$(stat -c %s "$swap")" -ne "$swap_bytes" ]; then
-    swap_drop && say "swap: dropped the old file" || say "swap: could not drop the old file"
-  fi
-  if [ "$(wc -l </proc/swaps)" -le 1 ]; then
-    if [ -f "$swap" ] || sudo fallocate -l "$swap_bytes" "$swap"; then
-      sudo chmod 600 "$swap" && loop=$(sudo losetup -f --show "$swap") && sudo chmod 660 "$loop" &&
-        sudo mkswap "$loop" >/dev/null && sudo swapon "$loop" && say "swap: $(($(stat -c %s "$swap") / 1024 / 1024 / 1024)) GiB on $loop" ||
-        say "swap: could not turn it on"
-    fi
-  fi
 fi
 
 repo=~/$NAME
-. "$d/local.sh"
-[ -z "$LOCAL_OFF" ] || local_off
 [ -d "$repo/.git" ] || git init -q "$repo"
 cd "$repo" || finish 90
-# An empty bundle means this Sprite already has the commit.
+# An empty bundle means this VM already has the commit.
 if [ -s "$d/in.bundle" ]; then
   git fetch -q "$d/in.bundle" "+HEAD:refs/laptop/gate" || { say "bundle fetch failed"; finish 90; }
 fi
@@ -124,13 +95,11 @@ if [ -f "$d/untracked.tar" ]; then
 fi
 
 # The tools come from the commit's own provision script and pins, so a
-# toolchain bump refreshes each Sprite on its first gate instead of failing
-# them all (the spare could not cover a pin change either).
+# toolchain bump refreshes a copy of the older golden on its first part
+# instead of failing it (until Fleet's next golden holds the new stamp).
 have=$(cat ~/"$NAME-stamp" 2>/dev/null || echo none)
 if [ "$have" != "$STAMP" ]; then
   say "provision stamp $have, want $STAMP; refreshing tools"
-  # What it installs belongs on the root disk.
-  local_unmount
   # Absolute paths: a provision script may cd (to /tmp, to download).
   provision=()
   for path in "${PROVISION[@]}"; do provision+=("$repo/$path"); done
@@ -139,25 +108,22 @@ if [ "$have" != "$STAMP" ]; then
   else
     bash "${provision[0]}" "$STAMP" "${provision[@]:1}" || { say "tool refresh failed"; finish 89; }
   fi
-  [ "$(cat ~/"$NAME-stamp" 2>/dev/null)" = "$STAMP" ] || { say "tool refresh did not stamp the Sprite"; finish 89; }
-  local_prune_tools
+  [ "$(cat ~/"$NAME-stamp" 2>/dev/null)" = "$STAMP" ] || { say "tool refresh did not stamp the VM"; finish 89; }
   lap "tools refreshed"
 fi
 [ ! -f ~/"$NAME-env.sh" ] || . ~/"$NAME-env.sh"
-# `sprite exec` sets no SHELL, and erlexec's port program exits 4 without one.
+# erlexec's port program exits 4 without a SHELL.
 export SHELL=${SHELL:-/bin/bash}
-# Before anything below touches a build cache, which may then be the copy.
-local_on
-# Mix's build locks live in /tmp. A Sprite that restarts while Mix writes
+# Mix's build locks live in /tmp. A host that restarts while Mix writes
 # one leaves an empty lock file that every later Mix command fails reading;
-# parts run one at a time per Sprite, so no lock here is live.
+# parts run one at a time per VM, so no lock here is live.
 rm -rf /tmp/mix_lock_*
-# A Sprite that dies while Mix compiles leaves .beam files its manifest
+# A host that dies while Mix compiles leaves .beam files its manifest
 # calls current but that carry no debug info, and the next Dialyzer fails on
 # them ("Could not get Core Erlang code"). The marker outlives only a part
 # that never finished, and then the app's build (not the deps') goes. The
-# marker and the warm keys are the project's (several share an image
-# Sprite); a Sprite that ran one project before keeps its unnamed ones.
+# marker and the warm keys are the project's (one golden holds every
+# project's tree).
 unfinished=~/gate-unfinished-$NAME
 [ ! -e ~/gate-unfinished ] || mv ~/gate-unfinished "$unfinished"
 if [ -e "$unfinished" ]; then
@@ -194,7 +160,7 @@ if [ ${#WARM_NAMES[@]} -gt 0 ]; then
     current=; [ "$(cat "$keyfile" 2>/dev/null)" != "$key" ] || current=1
     [ -z "$current" ] || [ "${WARM_FORCE:-}" = 1 ] || continue
     # A golden run's seed (gate/lib/gate/engine.ex, seed/2): whole where
-    # this Sprite's may be half built, so the build then only checks it.
+    # this VM's may be half built, so the build then only checks it.
     if [ -z "$current" ] && [ -f "$d/seed-$name.tar" ]; then
       tar -xf "$d/seed-$name.tar" -C ~ && say "seeded $name" || say "seeding $name failed"
     fi
@@ -216,8 +182,8 @@ phase run
 touch "$unfinished"
 # A native crash keeps its core, so a part's SIGSEGV can be read rather
 # than guessed at: Node died at startup in about one soco static part in
-# ten on the gate Sprites (2026-10), never on the dev Sprite, and each
-# Sprite's restart takes its kernel log. ~/cores keeps the newest three.
+# ten on the gate Sprites (2026-10), and a host's restart takes its kernel
+# log. ~/cores keeps the newest three.
 cores=~/cores
 if [ -e /proc/sys/kernel/core_pattern ] && mkdir -p "$cores" &&
   echo "$cores/core.%E.%p.%t" | sudo -n tee /proc/sys/kernel/core_pattern >/dev/null 2>&1; then
@@ -240,7 +206,7 @@ for core in $(find "$cores" -maxdepth 1 -name 'core.*' -newer "$d/run-began" 2>/
   fi
 done
 ls -t "$cores"/core.* 2>/dev/null | tail -n +4 | while IFS= read -r old; do rm -f "$old"; done
-# A command killed by a signal (a Bus error as the Sprite fails) may have
+# A command killed by a signal (a Bus error as the host fails) may have
 # been compiling, so its marker stays.
 [ "$rc" -ge 128 ] || rm -f "$unfinished"
 # A suite part names its test files; the lap keeps the command before them.

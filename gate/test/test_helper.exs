@@ -2,62 +2,25 @@ ExUnit.start()
 
 defmodule Gate.Fake do
   @moduledoc """
-  A project checkout and a fake `sprite` CLI whose Sprites are directories:
-  `<root>/<sprite>/home` is a Sprite's home, `~/.life` its life. An exec
-  runs there; a TTY exec runs in a session of its own that outlives its
-  client, as a real one does. A Sprite with a `down` file answers nothing
-  ("Error: connection closed"); one with `tty-silent` runs a TTY exec but
-  shows none of its output, and `tty-lossy` all but its launch line; one with
-  `slow-stage` takes that many seconds over each upload. Checkpoints go to `<sprite>/checkpoints`.
-
-  A host named `<vm>.exe.xyz` is an exe.dev VM, reached by a fake `ssh`
-  (`$GATE_SSH`) that runs its remote command in the same kind of home, and
-  a fake `su` that runs `su - gate -c <command>` there.
+  A project checkout and fake exe.dev VMs, each a directory:
+  `<root>/<vm>/home` is its home, `~/.life` its life. A fake `ssh`
+  (`$GATE_SSH`) runs its remote command there, and a fake `su` runs
+  `su - gate -c <command>` there too. A VM with a `down` file refuses ssh;
+  one with `slow-stage` takes that many seconds over each upload.
+  `Gate.FakeFleet` leases them.
   """
 
   import ExUnit.Assertions
+  import ExUnit.Callbacks, only: [on_exit: 1]
 
-  @sprite_cli ~S"""
-  #!/bin/bash
-  root=$FAKE_SPRITES
-  s=
-  [ "${1:-}" != -s ] || { s=$2; shift 2; }
-  case "$1" in
-    list) for d in "$root"/*/; do basename "$d"; done; exit 0 ;;
-    create) mkdir -p "$root/$3/home" && echo life-1 >"$root/$3/home/.life"; exit 0 ;;
-    destroy) rm -rf "${root:?}/$4"; exit 0 ;;
-    checkpoint)
-      [ "$2" != list ] || { cat "$root/$4/checkpoints" 2>/dev/null; exit 0; }
-      n=$(($(wc -l <"$root/$4/checkpoints" 2>/dev/null || echo 0) + 1))
-      echo "cp-$n  $6" >>"$root/$4/checkpoints"; exit 0 ;;
-  esac
-  [ -d "$root/$s" ] || { echo "Error: no sprite $s"; exit 1; }
-  [ ! -e "$root/$s/down" ] || { echo "Error: connection closed"; exit 1; }
-  shift
-  tty=
-  [ "$1" != --tty ] || { tty=1; shift; }
-  shift
-  export HOME=$root/$s/home
-  cd "$HOME"
-  echo "$s $*" >>"$root/calls"
-  if [ -n "$tty" ]; then
-    out=$root/$s/tty-$$.out
-    : >"$out"
-    setsid "$@" >"$out" 2>&1 </dev/null &
-    [ ! -e "$root/$s/tty-silent" ] || exec sleep 600
-    [ ! -e "$root/$s/tty-lossy" ] || exec tail -f "$out" | sed -u 's/gate-launched.*/garbled/' 
-    exec tail -f "$out"
-  fi
-  # A Sprite with `slow-stage` takes that many seconds over each upload.
-  case "$*" in
-    *gate-staged*) [ ! -e "$root/$s/slow-stage" ] || sleep "$(cat "$root/$s/slow-stage")" ;;
-  esac
-  exec "$@"
-  """
+  @vms ~w(vm-1.exe.xyz vm-2.exe.xyz vm-3.exe.xyz)
+
+  @doc "The fake VMs' names: `vm(1)` is `vm-1.exe.xyz`."
+  def vm(n), do: "vm-#{n}.exe.xyz"
 
   @ssh ~S"""
   #!/bin/bash
-  root=$FAKE_SPRITES
+  root=$FAKE_VMS
   while [ "${1:-}" = -o ]; do shift 2; done
   host=$1 remote=$2
   [ -d "$root/$host" ] || { echo "ssh: Could not resolve hostname $host"; exit 255; }
@@ -65,6 +28,9 @@ defmodule Gate.Fake do
   export HOME=$root/$host/home
   cd "$HOME"
   echo "$host ssh $remote" >>"$root/calls"
+  case "$remote" in
+    *gate-staged*) [ ! -e "$root/$host/slow-stage" ] || sleep "$(cat "$root/$host/slow-stage")" ;;
+  esac
   # In a session of its own, as a real remote command is out of reach of
   # what ends the client (`libexec/deadline` kills its group); fd 3 keeps
   # stdin, which a background job would lose.
@@ -89,22 +55,21 @@ defmodule Gate.Fake do
 
   @doc """
   A checkout with `.gate.json` (`config` merged in) and the scripts the
-  parts run (`cmd.sh <behavior>`), Sprites `sprites`, and the fake CLI on
-  PATH. Returns `%{top, root, logs}`.
+  parts run (`cmd.sh <behavior>`), the VMs, and the fakes on PATH.
+  Returns `%{top, root, logs, tmp}`.
   """
-  def setup(tmp, sprites, config \\ %{}) do
+  def setup(tmp, config \\ %{}) do
     top = Path.join(tmp, "proj")
-    root = Path.join(tmp, "sprites")
+    root = Path.join(tmp, "vms")
     bin = Path.join(tmp, "bin")
     logs = Path.join(tmp, "logs")
     Enum.each([top, root, bin], &File.mkdir_p!/1)
 
-    for s <- sprites do
+    for s <- @vms do
       File.mkdir_p!(Path.join([root, s, "home"]))
       File.write!(Path.join([root, s, "home", ".life"]), "life-1\n")
     end
 
-    executable(Path.join(bin, "sprite"), @sprite_cli)
     executable(Path.join(bin, "setsid"), @setsid)
     executable(Path.join(bin, "fake-ssh"), @ssh)
     executable(Path.join(bin, "su"), @su)
@@ -114,16 +79,13 @@ defmodule Gate.Fake do
       Map.merge(
         %{
           "name" => "proj",
-          "pool" => sprites,
-          "dev" => ["dev-1"],
+          "pool" => "exe",
           "logs" => logs,
-          "locks" => Path.join(tmp, "locks"),
           "parts" => ["bash", "-c", "cat parts.tsv", "parts"],
           "stamp" => [".tool-versions", "provision.sh"],
           "provision" => ["provision.sh", ".tool-versions"],
           "setup" => "setup.sh",
           "keep" => ["cache"],
-          "provision_gate" => ["bash cmd.sh green"],
           "weights" => "weights.exs",
           "limits" => %{"poll" => 0.1, "run" => 20, "unreachable" => 2, "launch" => 10}
         },
@@ -148,46 +110,13 @@ defmodule Gate.Fake do
     git(top, ["add", "."])
     git(top, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "the project"])
 
-    System.put_env("FAKE_SPRITES", root)
+    System.put_env("FAKE_VMS", root)
     System.put_env("PATH", bin <> ":" <> System.get_env("PATH"))
     System.put_env("GATE_KILL_GRACE", "1")
     %{top: top, root: root, logs: logs, tmp: tmp}
   end
 
-  @fake_sudo ~S"""
-  #!/bin/bash
-  # A bind mount as a symlink: the same path, read and written elsewhere.
-  under() { echo "$GATE_LOCAL_ROOT/under/$(echo "$1" | tr / %)"; }
-  shift
-  case "$1" in
-    true) ;;
-    mount)
-      mkdir -p "$GATE_LOCAL_ROOT/under"
-      mv "$4" "$(under "$4")" && ln -s "$3" "$4" ;;
-    umount) rm "$2" && mv "$(under "$2")" "$2" ;;
-    *) exit 1 ;;
-  esac
-  """
-
-  @doc """
-  What a part's local disk needs (`sprite/local.sh`): fake `sudo` and
-  `mountpoint`, the disk at `<tmp>/local`, and `/opt/gate` at `<tmp>/opt`.
-  Returns the two.
-  """
-  def local_disk(tmp) do
-    bin = Path.join(tmp, "bin")
-    executable(Path.join(bin, "sudo"), @fake_sudo)
-    executable(Path.join(bin, "mountpoint"), "#!/bin/bash\n[ -L \"$2\" ]\n")
-    disk = Path.join(tmp, "local")
-    opt = Path.join(tmp, "opt")
-    System.put_env("GATE_LOCAL_ROOT", disk)
-    System.put_env("GATE_LOCAL_OPT", opt)
-    %{disk: disk, opt: opt}
-  end
-
-  def mounted?(path), do: match?({:ok, _}, File.read_link(path))
-
-  @doc "Ends what the fake Sprites still run (detached jobs, keepers, `tail -f` clients)."
+  @doc "Ends what the fake VMs still run (detached jobs)."
   def stop(root), do: System.cmd("pkill", ["-f", root])
 
   def parts(top, parts) do
@@ -198,6 +127,18 @@ defmodule Gate.Fake do
   end
 
   def config(top), do: Gate.Config.load(top)
+
+  @doc "A `Gate.FakeFleet` leasing `hosts`, stopped when the test ends."
+  def fleet(hosts) do
+    fleet = Gate.FakeFleet.start(hosts)
+
+    on_exit(fn ->
+      if Process.alive?(fleet), do: Gate.FakeFleet.stop(fleet)
+      System.delete_env("GATE_FLEET_SOCKET")
+    end)
+
+    fleet
+  end
 
   @doc "Runs `fun` capturing stdout and stderr: `{status, stdout, stderr}`."
   def capture(fun) do
@@ -230,24 +171,31 @@ end
 
 defmodule Gate.FakeFleet do
   @moduledoc """
-  rigd's `Fleet` as a gate sees it: a Unix socket that leases `sprites`,
+  rigd's `Fleet` as a gate sees it: a Unix socket that leases `hosts`,
   idle ones oldest-released first, one per waiting connection, and takes
-  them back. `released/1` lists `{sprite, result}` in order, `leases/1`
-  each lease request as sent; a connection
-  that closes holding a Sprite gives it back as `"dropped"`.
+  them back. `released/1` lists `{host, result}` in order, `leases/1`
+  each lease request as sent; a connection that closes holding a VM gives
+  it back as `"dropped"`.
   """
 
   use GenServer
 
-  def start(sprites) do
-    path = Path.join(System.tmp_dir!(), "gate-fleet-#{System.unique_integer([:positive])}.sock")
+  def start(hosts) do
+    # The OS pid too: unique integers start over each run, and a run cut
+    # short leaves its sockets behind.
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "gate-fleet-#{System.pid()}-#{System.unique_integer([:positive])}.sock"
+      )
+
     System.put_env("GATE_FLEET_SOCKET", path)
-    start(sprites, path)
+    start(hosts, path)
   end
 
   @doc "Starts one on `path`, as rigd does again on its socket after a restart."
-  def start(sprites, path) do
-    {:ok, pid} = GenServer.start(__MODULE__, {path, sprites})
+  def start(hosts, path) do
+    {:ok, pid} = GenServer.start(__MODULE__, {path, hosts})
     pid
   end
 
@@ -258,13 +206,15 @@ defmodule Gate.FakeFleet do
   def stop(pid), do: GenServer.stop(pid)
 
   @impl true
-  def init({path, sprites}) do
+  def init({path, hosts}) do
+    File.rm(path)
+
     {:ok, listen} =
       :gen_tcp.listen(0, [:binary, packet: :line, active: false, ifaddr: {:local, path}])
 
     me = self()
     spawn_link(fn -> accept(listen, me) end)
-    {:ok, %{idle: sprites, waiting: [], held: %{}, released: [], leases: [], path: path}}
+    {:ok, %{idle: hosts, waiting: [], held: %{}, released: [], leases: [], path: path}}
   end
 
   @impl true

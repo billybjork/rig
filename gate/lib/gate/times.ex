@@ -19,17 +19,16 @@ defmodule Gate.Times do
       |> Enum.count(fn {name, _} -> String.starts_with?(name, "test-") end)
 
     logs = File.ls!(config.logs)
-    pool = Enum.map_join(config.pool, "|", &Regex.escape/1)
-    pattern = ~r/\A(#{pool})-(\d{8}-\d{6}-[0-9a-f]{8})-(test-\d+)\.log\z/
+    pattern = ~r/\A(.+)-(\d{8}-\d{6}-[0-9a-f]{8})-(test-\d+)\.log\z/
 
     found =
       for file <- logs,
-          [_, _sprite, run, part] <- [Regex.run(pattern, file)],
+          [_, _host, run, part] <- [Regex.run(pattern, file)],
           do: {run, part, file}
 
     green? = fn file ->
       text = File.read!(Path.join(config.logs, file))
-      text =~ ~r/^gate-time: /m and Gate.Sprite.last_line(text) == "sprite-gate: exit 0"
+      text =~ ~r/^gate-time: /m and Gate.last_line(text) == "sprite-gate: exit 0"
     end
 
     run =

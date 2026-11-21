@@ -1,8 +1,8 @@
-# A part's command on a fake Sprite (test_helper.exs): `bash cmd.sh <behavior>`,
-# run in ~/proj with HOME the Sprite's home. A behavior that should happen
-# once, whichever Sprite runs it first, marks $FAKE_SPRITES/<behavior>.
-once() { [ ! -e "$FAKE_SPRITES/$1" ] && touch "$FAKE_SPRITES/$1"; }
-restart() { # what a Sprite restarting does to a part: a new life, its processes gone
+# A part's command on a fake VM (test_helper.exs): `bash cmd.sh <behavior>`,
+# run in ~/proj with HOME the VM's home. A behavior that should happen
+# once, whichever VM runs it first, marks $FAKE_VMS/<behavior>.
+once() { [ ! -e "$FAKE_VMS/$1" ] && touch "$FAKE_VMS/$1"; }
+restart() { # what a VM restarting does to a part: a new life, its processes gone
   echo "life-$RANDOM" >~/.life
   kill -9 -- "-$(cat ~/parts/*/job.pid)"
 }
@@ -26,18 +26,15 @@ case "$1" in
     if once slowed; then sleep 30; echo "never"; fi
     echo fine ;;
   restart-once) if once restarted; then restart; sleep 30; fi; echo fine ;;
-  restarts) # the first $2 runs, on any Sprite
-    n=$(cat "$FAKE_SPRITES/restarts" 2>/dev/null || echo 0)
-    if [ "$n" -lt "$2" ]; then echo $((n + 1)) >"$FAKE_SPRITES/restarts"; restart; sleep 30; fi
+  restarts) # the first $2 runs, on any VM
+    n=$(cat "$FAKE_VMS/restarts" 2>/dev/null || echo 0)
+    if [ "$n" -lt "$2" ]; then echo $((n + 1)) >"$FAKE_VMS/restarts"; restart; sleep 30; fi
     echo built ;;
-  drop-keeper)
-    kill -9 -- "-$(cat ~/parts/*/keeper.pid)"
-    sleep 1; echo "outlived its keeper" ;;
   vanish-once)
-    if once vanished; then touch "$FAKE_SPRITES/$(basename "$(dirname "$HOME")")/down"; sleep 30; fi
+    if once vanished; then touch "$FAKE_VMS/$(basename "$(dirname "$HOME")")/down"; sleep 30; fi
     echo fine ;;
   warm)
-    echo "warm run" >>"$FAKE_SPRITES/warms"
+    echo "warm run" >>"$FAKE_VMS/warms"
     if once warm-restarted; then restart; sleep 30; fi
     sleep "${2:-0}"
     echo built ;;

@@ -131,7 +131,7 @@ Still to come, in this order (agreed with Billy, 2026-10-28):
    worktrees, no values in agents' context (agents may run `fnox exec`,
    never `fnox get` or `bws secret`), prod keys only in `deploy`. Render
    and Railway keep their env vars, pushed from the store on rotation.
-5. Agent sessions on Sprites, then Sprites as Rex hosts.
+5. Agent sessions on exe.dev VMs, as Rex hosts (`EXE.md`, step 5).
 
 The move from Sprites to exe.dev, the gate pool and a workbench VM for
 agents' heavy runs, is planned in `EXE.md` (Billy, 2026-11-20); it
@@ -141,7 +141,7 @@ The audit behind this (Sprite failure modes, duplication, secrets) is in the
 session of 2026-10-28; the Sprite gate's open items are in
 `~/dev/ops/handoffs/2026-10-28-sprite-gate-open-items.md`.
 
-## Where we are (2026-10-30)
+## Where we are (2026-11-21)
 
 Done: this repository; the shared guide and `handoff` skill; Rex config moved
 in; secrets (Bitwarden + fnox in soco, heaters, red-hot-xtra, billybjork.com;
@@ -225,9 +225,12 @@ env its dialyzer runs in, and a warm key that includes its command (rig
 destroyed and rigd's Sprite side of `Fleet` removed. Step 4, the
 workbench, is live (2026-11-21): `gate run` (each project's `run-remote`)
 leases its own fresh copy of the golden per run, streams the command's
-output and removes it after. The dev Sprites are destroyed (heaters
-on it since #874; soco's rename waits for its deploy fix), and the
-Sprite backend comes out of `gate/` next. A golden is now synced before its pause (rig
-4119749: an unsynced one gave every heaters copy empty beams).
+output and removes it after (heaters since #874, soco since #903). The
+dev Sprites are destroyed, and the Sprite backend is out of `gate/`
+(2026-11-21): `gate/` runs parts on exe.dev only, and the ship worker no
+longer needs the `sprite` CLI. A golden is synced before its pause (rig
+4119749: an unsynced one gave every heaters copy empty beams). Step 4 is
+done; Fly holds nothing of rig's.
 
-Then agents on Sprites (step 5).
+Step 5 (`EXE.md`) is later, Billy's: secrets on the workbench through
+fnox's `fleet` tier, and agent sessions on VMs as Rex hosts.

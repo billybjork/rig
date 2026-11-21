@@ -1,46 +1,38 @@
 defmodule Gate.Engine do
   @moduledoc """
-  Runs parts on Sprites and judges them. Each part is staged (its tar:
-  the Sprite-side job, its vars and argv, the git bundle that brings the
-  Sprite to the commit) and launched detached (`Gate.Host.launch/4`: a Fly Sprite or an exe.dev VM),
-  then polled every `limits.poll` seconds, one call at a time, each poll
-  appending the log's new bytes to the part's log here.
+  Runs parts on exe.dev VMs (`Gate.Exe`) and judges them. Each part is
+  staged (its tar: the host-side job, its vars and argv, the git bundle
+  that brings the VM to the commit) and launched detached, then polled
+  every `limits.poll` seconds, one call at a time, each poll appending the
+  log's new bytes to the part's log here.
+
+  A gate's or a run's part (a job assigned `:lease`) waits for a VM leased
+  from rigd's `Fleet` (`Gate.Lease`), a fresh copy of the golden, and gives
+  it back as it ends, saying how: `green`, `red`, `restarted` (its VM
+  restarted or went unreachable, or the upload outlasted its limit),
+  `failed` (the VM failed it otherwise) or `crashed`. `Fleet` going
+  mid-gate leaves no verdict. `gate golden` names its VM instead.
 
   A part ends one of three ways:
 
     * it ran: its job wrote a status in the `run` phase, green on 0 and
       red otherwise, except a native crash (`crashed?/1`), which reruns;
-    * its Sprite failed: the upload or launch failed, a phase outlasted its
-      limit (it is then ended on the Sprite), the Sprite's life changed
-      (it restarted), the job ended in setup or without a status, or no
-      poll got through for `limits.unreachable` seconds. It reruns;
-    * a restart during the `warm` phase relaunches it once on the same
-      Sprite instead: a cold dialyzer PLT build runs the Sprite out of
-      memory at about 15 min, and the retry finishes from what it left.
+    * its VM failed: the upload or launch failed, a phase outlasted its
+      limit (it is then ended on the VM), the VM's life changed (it
+      restarted), the job ended in setup or without a status, or no poll
+      got through for `limits.unreachable` seconds. It reruns once, on the
+      next VM `Fleet` leases; failing there too, it is `:sprite_failed`.
+      A named VM's part (`gate golden`) does not rerun: it is
+      `:sprite_failed` at once, and the golden tries the step again;
+    * a restart during the `warm` phase relaunches it once on the same VM
+      instead, where the cache was half built.
 
-  A part whose Sprite restarted is relaunched there once, where its
-  caches are warm: restarts are platform events, so another Sprite is no
-  safer (Billy, 2026-10-30). Any other failure, a second restart, or a
-  crash reruns once on a free Sprite: the spare while no part has taken
-  it, then any Sprite whose own part has ended green or red (a Sprite that
-  failed or crashed is never free again in this run). With none free it
-  waits for one; when every other part has ended and none is free, it is
-  `:sprite_failed`. A Sprite's memory loses a write now and then (Node's
-  segfaults on soco's gate Sprites, 2026-10), so one bad Sprite costs a
-  rerun, not the gate.
-
-  On exe.dev (a job assigned `:lease`), each part, its first run and its
-  rerun alike, waits for a VM leased from rigd's `Fleet` (`Gate.Lease`)
-  and gives it back as it ends, saying how: `green`, `red`, `restarted`
-  (its VM restarted or went unreachable), `failed` (the VM failed it
-  otherwise) or `crashed`. A part reruns on the next VM `Fleet` leases, a
-  fresh copy. `Fleet` going mid-gate leaves no verdict.
-
-  A dropped keeper (the TTY session that keeps the Sprite awake) is
-  relaunched while its job runs.
+  A part whose VM restarted is relaunched there once, where its caches
+  are warm: restarts are platform events, so another VM is no safer
+  (Billy, 2026-10-30). A second restart reruns it.
   """
 
-  alias Gate.{Config, Host, Sprite}
+  alias Gate.{Config, Exe}
 
   defmodule Job do
     @moduledoc "A part: its name, its command, the caches it warms, and a working tree to lay over the commit (`gate run`)."
@@ -54,7 +46,6 @@ defmodule Gate.Engine do
     :stamp,
     :run,
     :work,
-    :spare,
     stream: false,
     # A golden run stages each warm cache's seed (`Gate.Golden`).
     seed: false,
@@ -66,14 +57,15 @@ defmodule Gate.Engine do
   def say(line), do: IO.puts(:stderr, line)
 
   @doc """
-  Runs each `{job, sprite}` at once (`sprite` may be `:lease`) and returns, in order, each part's
-  `%{name, sprite, result, rc, secs, log, reran_from, why}`; `result` is
+  Runs each `{job, host}` at once (`host` a VM's name, or `:lease`) and
+  returns, in order, each part's
+  `%{name, host, result, rc, secs, log, reran_from, why}`; `result` is
   `:green`, `:red`, `:sprite_failed` or, for `gate run`, `:overlay`.
   """
   def run(%__MODULE__{} = ctx, assigned) do
     File.mkdir_p!(ctx.config.logs)
     File.mkdir_p!(ctx.work)
-    state = %{parts: %{}, free: List.wrap(ctx.spare), waiting: [], results: %{}, pending: %{}}
+    state = %{parts: %{}, results: %{}, pending: %{}}
 
     state =
       assigned
@@ -82,8 +74,8 @@ defmodule Gate.Engine do
         {{job, :lease}, i}, state ->
           lease(ctx, state, %{i: i, job: job, reran_from: nil}, nil)
 
-        {{job, sprite}, i}, state ->
-          start(ctx, state, %{i: i, job: job, reran_from: nil}, sprite, "on #{sprite}")
+        {{job, host}, i}, state ->
+          start(ctx, state, %{i: i, job: job, reran_from: nil}, host, "on #{host}")
       end)
 
     state = loop(ctx, state)
@@ -91,11 +83,9 @@ defmodule Gate.Engine do
   end
 
   defp loop(ctx, state) do
-    cond do
-      map_size(state.parts) > 0 or map_size(state.pending) > 0 -> loop(ctx, poll_all(ctx, state))
-      state.waiting != [] -> loop(ctx, give_up(ctx, state))
-      true -> state
-    end
+    if map_size(state.parts) > 0 or map_size(state.pending) > 0,
+      do: loop(ctx, poll_all(ctx, state)),
+      else: state
   end
 
   defp poll_all(ctx, state) do
@@ -108,40 +98,30 @@ defmodule Gate.Engine do
     |> Enum.reduce(state, &poll(ctx, &2, &1))
   end
 
-  # Every other part has ended and no Sprite is free: the waiting parts
-  # have nowhere to rerun.
-  defp give_up(ctx, %{waiting: waiting} = state) do
-    Enum.reduce(waiting, %{state | waiting: []}, fn {part, rc, why}, state ->
-      ctx.say.("#{part.job.name}: no Sprite was free to rerun it")
-      done(ctx, state, part, :sprite_failed, rc, "#{why}; no Sprite was free to rerun it")
-    end)
-  end
-
-  # A part waits for a Sprite from `Fleet`.
+  # A part waits for a VM from `Fleet`.
   defp lease(ctx, state, base, why) do
     pid =
       Gate.Lease.request(ctx.config.name, base.job.name, base.i,
-        pool: ctx.config.pool,
         warm: Enum.map(base.job.warm, & &1.key)
       )
 
     ctx.report.(
       base,
       :working,
-      if(why, do: "#{why}; waiting for a Sprite", else: "waiting for a Sprite")
+      if(why, do: "#{why}; waiting for a VM", else: "waiting for a VM")
     )
 
     put_in(state.pending[base.i], Map.merge(base, %{lease: pid, why: why}))
   end
 
-  # Starts each part whose Sprite `Fleet` has leased.
+  # Starts each part whose VM `Fleet` has leased.
   defp granted(ctx, state) do
     receive do
-      {:fleet_granted, i, sprite, _pid} ->
+      {:fleet_granted, i, host, _pid} ->
         {base, pending} = Map.pop!(state.pending, i)
-        message = if base.why, do: "#{base.why}; rerunning on #{sprite}", else: "on #{sprite}"
-        if base.why, do: ctx.say.("#{base.job.name}: rerunning on #{sprite}")
-        state = start(ctx, %{state | pending: pending}, Map.delete(base, :why), sprite, message)
+        message = if base.why, do: "#{base.why}; rerunning on #{host}", else: "on #{host}"
+        if base.why, do: ctx.say.("#{base.job.name}: rerunning on #{host}")
+        state = start(ctx, %{state | pending: pending}, Map.delete(base, :why), host, message)
         granted(ctx, state)
 
       {:fleet_lost, _i, why} ->
@@ -151,16 +131,16 @@ defmodule Gate.Engine do
     end
   end
 
-  defp start(ctx, state, base, sprite, message) do
+  defp start(ctx, state, base, host, message) do
     %{job: job} = base
-    id = "#{ctx.run}-#{job.name}-#{sprite}"
-    log = Path.join(ctx.config.logs, "#{sprite}-#{ctx.run}-#{job.name}.log")
+    id = "#{ctx.run}-#{job.name}-#{host}"
+    log = Path.join(ctx.config.logs, "#{host}-#{ctx.run}-#{job.name}.log")
     File.write!(log, "")
     now = now()
 
     part =
       Map.merge(base, %{
-        sprite: sprite,
+        host: host,
         id: id,
         log: log,
         t0: now,
@@ -178,9 +158,9 @@ defmodule Gate.Engine do
 
     with {:ok, tar} <- pack(ctx, part),
          :ok <- stage(ctx, part, tar),
-         {:ok, life} <- Host.launch(sprite, id, nil, ctx.config.limits["launch"]) do
+         {:ok, life} <- Exe.launch(host, id, ctx.config.limits["launch"]) do
       if file = System.get_env("GATE_PARTS_FILE"),
-        do: File.write!(file, "#{sprite} #{id}\n", [:append])
+        do: File.write!(file, "#{host} #{id}\n", [:append])
 
       put_in(state.parts[part.i], %{part | life: life, last_ok: now()})
     else
@@ -191,9 +171,9 @@ defmodule Gate.Engine do
 
   # Uploads the part's tar, its size and lap in the part's log (and the
   # gate's output once it is big enough to matter). An upload that outlasts
-  # its limit is the laptop's link, not the Sprite: a big one tries once more
+  # its limit is the laptop's link, not the VM: a big one tries once more
   # with twice the time, and one that still does not arrive reruns as
-  # `restarted`, which `Fleet` holds against no Sprite.
+  # `restarted`, which `Fleet` holds against no VM.
   @big_upload 20_000_000
   defp stage(ctx, part, tar) do
     limit = ctx.config.limits["stage"]
@@ -202,15 +182,15 @@ defmodule Gate.Engine do
     t0 = now()
 
     result =
-      case Host.stage(part.sprite, part.id, tar, limit) do
+      case Exe.stage(part.host, part.id, tar, limit) do
         {:error, {:timeout, why}} when size >= @big_upload ->
           note(part, "#{why}; uploading #{mb} MB again with #{limit * 2} s")
 
           ctx.say.(
-            "#{part.job.name}: the #{mb} MB upload to #{part.sprite} outlasted #{limit} s; again with #{limit * 2} s"
+            "#{part.job.name}: the #{mb} MB upload to #{part.host} outlasted #{limit} s; again with #{limit * 2} s"
           )
 
-          Host.stage(part.sprite, part.id, tar, limit * 2)
+          Exe.stage(part.host, part.id, tar, limit * 2)
 
         other ->
           other
@@ -220,7 +200,7 @@ defmodule Gate.Engine do
     note(part, "uploaded #{mb} MB in #{secs} s")
 
     if size >= @big_upload,
-      do: ctx.say.("#{part.job.name}: uploaded #{mb} MB to #{part.sprite} in #{secs} s")
+      do: ctx.say.("#{part.job.name}: uploaded #{mb} MB to #{part.host} in #{secs} s")
 
     case result do
       {:error, {:timeout, why}} -> {:error, why, "restarted"}
@@ -228,16 +208,16 @@ defmodule Gate.Engine do
     end
   end
 
-  # The part's tar: the Sprite-side job and keeper (and rig's image script
-  # for a project that uses it), its vars and argv, the
-  # bundle that brings this Sprite to the commit, and `gate run`'s overlay.
+  # The part's tar: the host-side job and its launch (and rig's image script
+  # for a project that uses it), its vars and argv, the bundle that brings
+  # the VM to the commit, and `gate run`'s overlay.
   defp pack(ctx, part) do
     dir = Path.join(ctx.work, part.id)
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
 
-    for {source, file} <- Host.files(part.sprite),
-        do: File.cp!(Path.join(Sprite.root(), source), Path.join(dir, file))
+    for {source, file} <- Exe.files(),
+        do: File.cp!(Path.join(Gate.root(), source), Path.join(dir, file))
 
     if ctx.config.image, do: File.cp!(Gate.Stamp.image(), Path.join(dir, "image.sh"))
 
@@ -247,7 +227,7 @@ defmodule Gate.Engine do
         File.exists?(seed),
         do: File.cp!(seed, Path.join(dir, "seed-#{warm.name}.tar"))
 
-    File.write!(Path.join(dir, "vars"), vars(ctx, part.job, part.sprite))
+    File.write!(Path.join(dir, "vars"), vars(ctx, part.job))
     File.write!(Path.join(dir, "argv"), Enum.map(part.job.argv, &[&1, 0]))
 
     if overlay = part.job.overlay do
@@ -255,7 +235,7 @@ defmodule Gate.Engine do
           do: File.cp!(Path.join(overlay, file), Path.join(dir, file))
     end
 
-    with :ok <- bundle(ctx, part.sprite, Path.join(dir, "in.bundle")) do
+    with :ok <- bundle(ctx, part.host, Path.join(dir, "in.bundle")) do
       tar = dir <> ".tar"
 
       case System.cmd("tar", ["--no-mac-metadata", "--no-xattrs", "-cf", tar, "-C", dir, "."],
@@ -263,15 +243,15 @@ defmodule Gate.Engine do
              stderr_to_stdout: true
            ) do
         {_, 0} -> {:ok, tar}
-        {out, _} -> {:error, "packing the part failed: #{Sprite.last_line(out)}"}
+        {out, _} -> {:error, "packing the part failed: #{Gate.last_line(out)}"}
       end
     end
   end
 
   @doc """
   The laptop's seed for a project's warm cache: a tar of what the cache
-  builds, from the Sprite's home (`soco/priv/plts/…`, `.mix/…`), which a
-  golden run's Sprite unpacks before building it. Under
+  builds, from the VM's home (`soco/priv/plts/…`, `.mix/…`), which a
+  golden run unpacks before building it. Under
   `$GATE_SEED`, else `~/.cache/gate-seed`, as `<project>/<warm>.tar`.
   """
   def seed(config, warm) do
@@ -279,13 +259,8 @@ defmodule Gate.Engine do
     Path.join([dir, config.name, warm <> ".tar"])
   end
 
-  defp vars(ctx, job, host) do
+  defp vars(ctx, job) do
     c = ctx.config
-    exe = Host.exe?(host)
-    # A golden's checkpoint holds only the root disk, `gate run`'s dev
-    # Sprite gets by as it is (`sprite/local.sh`), and an exe.dev VM's one
-    # disk is local.
-    local = if ctx.seed || job.overlay || exe, do: %{}, else: c.local
 
     """
     NAME=#{q(c.name)} SHA=#{q(ctx.sha)} STAMP=#{q(ctx.stamp)} SETUP=#{q(c.setup)}
@@ -294,26 +269,22 @@ defmodule Gate.Engine do
     WARM_NAMES=(#{qs(Enum.map(job.warm, & &1.name))})
     WARM_KEYS=(#{qs(Enum.map(job.warm, & &1.key))})
     WARM_CMDS=(#{qs(Enum.map(job.warm, & &1.command))})
-    LOCAL_PATHS=(#{qs(Map.get(local, "paths", []))})
-    LOCAL_TOOLS=(#{qs(Map.get(local, "tools", []))})
-    LOCAL_OFF=#{if ctx.seed or exe, do: "1", else: "''"}
     WARM_FORCE=#{if ctx.seed, do: "1", else: "''"}
-    HOST=#{if exe, do: "exe", else: "sprite"}
     """
   end
 
   defp q(value), do: "'" <> String.replace(to_string(value), "'", ~S('\'')) <> "'"
   defp qs(values), do: Enum.map_join(values, " ", &q/1)
 
-  # Nothing when the Sprite has the commit; else only the commits it lacks:
+  # Nothing when the VM has the commit; else only the commits it lacks:
   # those since the last tip it fetched when this checkout has that commit,
-  # and since the newest of HEAD's first parents it holds (`Sprite.holds/3`).
-  # The whole history (soco's is about 300 MB) goes only to a Sprite holding
-  # none of them. A Sprite that cannot be asked takes nothing: a full bundle
-  # sent to a Sprite that was merely slow to answer is what outlasted the
+  # and since the newest of HEAD's first parents it holds (`Exe.holds/3`).
+  # The whole history (soco's is about 300 MB) goes only to a VM holding
+  # none of them. A VM that cannot be asked takes nothing: a full bundle
+  # sent to a host that was merely slow to answer is what outlasted the
   # upload's limit.
   @candidates 64
-  defp bundle(ctx, sprite, path) do
+  defp bundle(ctx, host, path) do
     git = &System.cmd("git", &1, cd: ctx.config.top, stderr_to_stdout: true)
 
     candidates =
@@ -322,7 +293,7 @@ defmodule Gate.Engine do
         _ -> []
       end
 
-    with {:ok, tip, have} <- holds(sprite, ctx.config.name, candidates) do
+    with {:ok, tip, have} <- holds(host, ctx.config.name, candidates) do
       known_tip = tip != nil and match?({_, 0}, git.(["cat-file", "-e", "#{tip}^{commit}"]))
 
       args =
@@ -338,14 +309,14 @@ defmodule Gate.Engine do
     end
   end
 
-  defp holds(sprite, name, candidates, tries \\ 2) do
-    case Host.holds(sprite, name, candidates) do
+  defp holds(host, name, candidates, tries \\ 2) do
+    case Exe.holds(host, name, candidates) do
       {:error, _} when tries > 1 ->
         Process.sleep(2000)
-        holds(sprite, name, candidates, tries - 1)
+        holds(host, name, candidates, tries - 1)
 
       {:error, why} ->
-        {:error, "could not ask #{sprite} what it holds (#{why})", "restarted"}
+        {:error, "could not ask #{host} what it holds (#{why})", "restarted"}
 
       ok ->
         ok
@@ -356,7 +327,7 @@ defmodule Gate.Engine do
     if args do
       case git.(["bundle", "create", "-q", path | args]) do
         {_, 0} -> :ok
-        {out, _} -> {:error, "git bundle failed: #{Sprite.last_line(out)}"}
+        {out, _} -> {:error, "git bundle failed: #{Gate.last_line(out)}"}
       end
     else
       File.write!(path, "")
@@ -367,9 +338,9 @@ defmodule Gate.Engine do
     part = state.parts[i]
     limits = ctx.config.limits
 
-    case Host.poll(part.sprite, part.id, part.offset, 30) do
+    case Exe.poll(part.host, part.id, part.offset, 30) do
       {:ok, :gone, _} ->
-        failed(ctx, state, part, "the Sprite has no such part (restored or rebuilt?)")
+        failed(ctx, state, part, "the VM has no such part")
 
       {:error, why} ->
         if now() - part.last_ok > limits["unreachable"] * 1000,
@@ -383,9 +354,9 @@ defmodule Gate.Engine do
             ),
           else: state
 
-      {:ok, sprite_state, bytes} ->
-        part = take_log(ctx, part, bytes, sprite_state["size"])
-        judge(ctx, state, part, sprite_state)
+      {:ok, host_state, bytes} ->
+        part = take_log(ctx, part, bytes, host_state["size"])
+        judge(ctx, state, part, host_state)
     end
   end
 
@@ -413,13 +384,13 @@ defmodule Gate.Engine do
       s["life"] not in [nil, "", part.life] and was_warm and not part.warm_relaunched ->
         note(
           part,
-          "the Sprite restarted while warming (life #{part.life}, now #{s["life"]}); relaunching here"
+          "the VM restarted while warming (life #{part.life}, now #{s["life"]}); relaunching here"
         )
 
-        ctx.say.("#{part.job.name}: #{part.sprite} restarted while warming; relaunching it there")
+        ctx.say.("#{part.job.name}: #{part.host} restarted while warming; relaunching it there")
         relaunch(ctx, state, %{part | warm_relaunched: true})
 
-      # Restarts are platform events, no likelier on this Sprite than on
+      # Restarts are platform events, no likelier on this VM than on
       # another, and here its caches are warm: its rerun is here.
       s["life"] not in [nil, "", part.life] and not part.relaunched ->
         note(
@@ -427,8 +398,8 @@ defmodule Gate.Engine do
           "it restarted mid-part (life #{part.life}, now #{s["life"]}); rerunning it here"
         )
 
-        ctx.say.("#{part.job.name}: #{part.sprite} restarted; rerunning it there")
-        ctx.report.(part, :working, "#{part.sprite} restarted; rerunning it there")
+        ctx.say.("#{part.job.name}: #{part.host} restarted; rerunning it there")
+        ctx.report.(part, :working, "#{part.host} restarted; rerunning it there")
         relaunch(ctx, state, %{part | relaunched: true})
 
       s["life"] not in [nil, "", part.life] ->
@@ -447,16 +418,8 @@ defmodule Gate.Engine do
         failed(ctx, state, part, "the part ended without a status")
 
       now() - part.phase_at > limit * 1000 ->
-        Host.kill(part.sprite, part.id)
+        Exe.kill(part.host, part.id)
         failed(ctx, state, part, "its #{phase} phase outlasted #{limit} s")
-
-      s["keeper"] == "down" ->
-        case Host.launch(part.sprite, part.id, "keep", ctx.config.limits["launch"]) do
-          {:ok, _} -> note(part, "its keeper had gone; relaunched it")
-          {:error, why} -> note(part, "its keeper had gone and would not relaunch: #{why}")
-        end
-
-        put_in(state.parts[part.i], part)
 
       true ->
         put_in(state.parts[part.i], part)
@@ -464,7 +427,7 @@ defmodule Gate.Engine do
   end
 
   defp relaunch(ctx, state, part) do
-    case Host.launch(part.sprite, part.id, nil, ctx.config.limits["launch"]) do
+    case Exe.launch(part.host, part.id, ctx.config.limits["launch"]) do
       {:ok, life} ->
         put_in(state.parts[part.i], %{part | life: life, phase: "setup", phase_at: now()})
 
@@ -482,95 +445,69 @@ defmodule Gate.Engine do
       part.phase != "run" ->
         failed(ctx, state, part, "exit #{rc} in #{part.phase}: #{last_log_line(part)}")
 
-      rc != 0 and crashed?(part.log) and part.reran_from == nil ->
-        ctx.say.("#{part.job.name}: a process crashed on #{part.sprite} (log #{part.log})")
-        rerun(ctx, state, part, rc, "a native crash, not a gate result", "crashed")
+      rc != 0 and crashed?(part.log) and reruns?(part) ->
+        ctx.say.("#{part.job.name}: a process crashed on #{part.host} (log #{part.log})")
+        rerun(ctx, state, part, "a native crash, not a gate result", "crashed")
 
       rc != 0 and crashed?(part.log) ->
-        ctx.say.(
-          "#{part.job.name}: a process crashed on #{part.sprite}, its rerun (log #{part.log})"
-        )
-
+        again = if part.reran_from, do: ", on its rerun too"
+        ctx.say.("#{part.job.name}: a process crashed on #{part.host}#{again} (log #{part.log})")
         give_back(part, "crashed")
-        done(ctx, state, part, :sprite_failed, rc, "a process crashed, on its rerun too")
+        done(ctx, state, part, :sprite_failed, rc, "a process crashed#{again}")
 
       true ->
         result = if rc == 0, do: :green, else: :red
-        ctx.say.("#{part.job.name} #{result} in #{secs(part)} s on #{part.sprite}")
-        state = done(ctx, state, part, result, rc, nil)
-
-        if part.lease,
-          do: give_back(part, to_string(result)) && state,
-          else: free(ctx, %{state | free: state.free ++ [part.sprite]})
+        ctx.say.("#{part.job.name} #{result} in #{secs(part)} s on #{part.host}")
+        give_back(part, to_string(result))
+        done(ctx, state, part, result, rc, nil)
     end
   end
 
-  # `how` is what `Fleet` hears: `restarted` (the Sprite restarted or went
-  # unreachable, a platform event that says nothing of the Sprite) or
+  # `how` is what `Fleet` hears: `restarted` (the VM restarted or went
+  # unreachable, a platform event that says nothing of the VM) or
   # `failed`.
   defp failed(ctx, state, part, why, how \\ "failed") do
-    note(part, "#{part.sprite} failed: #{why}")
+    note(part, "#{part.host} failed: #{why}")
 
-    if part.reran_from == nil do
-      ctx.say.("#{part.job.name}: #{part.sprite} failed (#{why})")
-      rerun(ctx, state, part, nil, "#{part.sprite} failed", how)
+    if reruns?(part) do
+      ctx.say.("#{part.job.name}: #{part.host} failed (#{why})")
+      rerun(ctx, state, part, "#{part.host} failed", how)
     else
-      ctx.say.("#{part.job.name}: #{part.sprite} failed: #{why}")
+      ctx.say.("#{part.job.name}: #{part.host} failed: #{why}")
       give_back(part, how)
       done(ctx, state, part, :sprite_failed, nil, why)
     end
   end
 
-  # A part to rerun leaves the running ones and waits for a free Sprite:
-  # one of its own pool's, or the next `Fleet` leases.
-  defp rerun(ctx, state, part, rc, why, how) do
-    state = %{state | parts: Map.delete(state.parts, part.i)}
+  # A leased part reruns once; a named VM's (`gate golden`'s) does not.
+  defp reruns?(part), do: part.lease != nil and part.reran_from == nil
 
-    if part.lease do
-      give_back(part, how)
-      note(part, "#{why}; rerunning on the next Sprite the fleet leases")
-      lease(ctx, state, %{i: part.i, job: part.job, reran_from: part.sprite}, why)
-    else
-      free(ctx, %{state | waiting: state.waiting ++ [{part, rc, why}]})
-    end
+  # A part to rerun gives its VM back and waits for the next `Fleet` leases.
+  defp rerun(ctx, state, part, why, how) do
+    give_back(part, how)
+    note(part, "#{why}; rerunning on the next VM the fleet leases")
+    state = %{state | parts: Map.delete(state.parts, part.i)}
+    lease(ctx, state, %{i: part.i, job: part.job, reran_from: part.host}, why)
   end
 
   defp give_back(%{lease: nil}, _result), do: :ok
   defp give_back(%{lease: pid}, result), do: Gate.Lease.release(pid, result)
-
-  # Starts each waiting part on a free Sprite, in turn.
-  defp free(ctx, %{waiting: [{part, _rc, why} | waiting], free: [sprite | free]} = state) do
-    note(part, "#{why}; reran on #{sprite}")
-    ctx.say.("#{part.job.name}: rerunning on #{sprite}")
-    state = %{state | waiting: waiting, free: free}
-
-    ctx
-    |> start(
-      state,
-      %{i: part.i, job: part.job, reran_from: part.sprite},
-      sprite,
-      "#{why}; rerunning on #{sprite}"
-    )
-    |> then(&free(ctx, &1))
-  end
-
-  defp free(_ctx, state), do: state
 
   defp done(ctx, state, part, result, rc, why) do
     secs = secs(part)
 
     message =
       case result do
-        :green -> "green in #{secs} s on #{part.sprite}"
-        :red -> "red in #{secs} s on #{part.sprite}"
-        _ -> "#{why} (#{part.sprite}, after #{secs} s)"
+        :green -> "green in #{secs} s on #{part.host}"
+        :red -> "red in #{secs} s on #{part.host}"
+        _ -> "#{why} (#{part.host}, after #{secs} s)"
       end
 
     ctx.report.(part, if(result == :green, do: :done, else: :error), message)
 
     entry = %{
       name: part.job.name,
-      sprite: part.sprite,
+      host: part.host,
       result: result,
       rc: rc,
       secs: secs,
@@ -588,7 +525,7 @@ defmodule Gate.Engine do
 
   defp note(part, line), do: File.write!(part.log, "gate: #{line}\n", [:append])
 
-  defp last_log_line(part), do: part.log |> File.read!() |> Sprite.last_line()
+  defp last_log_line(part), do: part.log |> File.read!() |> Gate.last_line()
 
   defp secs(part), do: div(now() - part.t0, 1000)
 
