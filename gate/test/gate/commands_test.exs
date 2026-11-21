@@ -187,7 +187,7 @@ defmodule Gate.CommandsTest do
     # Its first restart relaunches it within the try (while warming), as
     # does the second (a restart), and the third ends the try: a golden's
     # step does not rerun elsewhere.
-    assert err =~ "warm-plt: sprite_failed"
+    assert err =~ "warm-plt: vm_failed"
     assert err =~ "warm-plt: green"
     refute err =~ ~r/\b(one|two):/
     [setup] = Path.wildcard(Path.join(env.logs, "vm-2.exe.xyz-*-setup.log"))
@@ -204,7 +204,7 @@ defmodule Gate.CommandsTest do
       Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "vm-2.exe.xyz") end)
 
     assert status == 2, err
-    assert length(String.split(err, "setup: sprite_failed")) == 4
+    assert length(String.split(err, "setup: vm_failed")) == 4
   end
 
   @tag gate: %{

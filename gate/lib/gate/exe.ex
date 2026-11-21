@@ -1,6 +1,6 @@
 defmodule Gate.Exe do
   @moduledoc """
-  Where a part runs: an exe.dev VM, `<vm>.exe.xyz` (rig's EXE.md). Its
+  Where a part runs: an exe.dev VM, `<vm>.exe.xyz` (rig's history/exe-move.md). Its
   stage, launch, poll and end are each one plain `ssh` call under
   `libexec/deadline`, which runs a host-side script (`exe/`). None streams
   a part's output: the job is started detached (`exe/launch.sh`), the VM

@@ -1,7 +1,7 @@
 # gate
 
 The gate runner every project in `~/dev` shares: a project's split gate
-and its ad-hoc runs, each part on its own exe.dev VM (rig's `EXE.md`). A
+and its ad-hoc runs, each part on its own exe.dev VM. A
 project keeps what is its own in `.gate.json` at its root
 (`lib/gate/config.ex` names each field): its parts (a command printing
 `name<TAB>command` lines), its provision script and the files whose hash
@@ -95,6 +95,20 @@ every session's (2026-11-16: a session's gate held soco's worker for 19
 minutes). The projects keep their own `gate-lock.sh` for the laptop's
 machine lock.
 
+## The image
+
+`image/provision.sh` is the one image for every project: the apt union,
+Postgres 17 with pgvector and pg_jsonschema, Swift, just and uv, and each
+project's Erlang, Elixir and Node from its own `.tool-versions`, side by
+side under `/opt/gate`. Its hash, with the project's pin files (`.gate.json`
+`image`), is the project's stamp; a part whose VM holds another stamp runs
+it before setup. Leave it be unless the image must change: any edit, a
+comment too, changes every stamp and remakes the golden (which is why its
+comments still speak of Sprites). `exe/base.sh` adds what a bare
+`ubuntu:26.04` exe.dev VM lacks (sudo, curl, git, the user `gate`, Python
+3.13 first on a login shell's PATH) and, as `base.sh boot`, the `/dev`
+links a fresh copy needs.
+
 ## The golden
 
 `gate golden <vm>.exe.xyz`, run in a project's checkout, readies a golden
@@ -103,7 +117,7 @@ at a time, each up to three tries; it runs no part. rigd's `Fleet` runs
 it for each project on a new `rig-golden-*` VM when `gate keys
 origin/main` (the stamp and each warm cache's key) no longer matches the
 golden's comment, syncs its disk, pauses it, and comments it
-(`rigd/lib/rigd/fleet/exe.ex`; `FLEET.md`, "On exe.dev").
+(rig's `rigd/README.md`, "Fleet").
 
 ## The workbench
 
@@ -129,20 +143,21 @@ own: the golden's are those of `origin/main`, and a branch that changes
 ## Before exe.dev
 
 The gate began on Fly Sprites: each project's pool, then a shared one
-(`FLEET.md`), with dev Sprites for ad-hoc runs. The Sprites are gone
-(2026-11-21), and with them the Sprite backend, `gate pool`, the local
-disk and the locks. A commit whose `.gate.json` names a Sprite pool (or
-`"fleet"`, the shared one) is refused, saying to rebase; its Sprite keys
-(`dev`, `local`, `locks`, `provision_gate`) are ignored. The log lines
-keep their `sprite-gate:` and `sprite-health:` prefixes, which the ship
-worker and digests read.
+(rig's `history/sprite-fleet.md`), with dev Sprites for ad-hoc runs; the
+move is `history/exe-move.md`. The Sprites are gone (2026-11-21), and with
+them the Sprite backend, `gate pool`, the local disk and the locks. A
+commit whose `.gate.json` names a Sprite pool (or `"fleet"`, the shared
+one) is refused, saying to rebase; its Sprite keys (`dev`, `local`,
+`locks`, `provision_gate`) are ignored. The log lines keep their
+`sprite-gate:` and `sprite-health:` prefixes, which the ship worker,
+digests and each project's logs read.
 
 ## The contract
 
 `gate check` keeps the one the ship worker reads (`shipyard/README.md`, "A
 project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
 stdout, 2 no verdict; a row per run in `<logs>/check-remote.tsv` (each
-part as `name:seconds:<vm>:result`, `sprite-failed` for a VM that failed
+part as `name:seconds:<vm>:result`, `vm-failed` for a VM that failed
 it); each part's log as `<logs>/<vm>-<run>-<part>.log`, whose last line
 is `sprite-gate: exit <status>` when its command ran; Rex program status
 per part as `${SHIPYARD_STATUS_ID:-gate}/<part>`.

@@ -1,6 +1,6 @@
 defmodule Gate.Run do
   @moduledoc """
-  `gate run <command...>`, the workbench (rig's EXE.md, step 4): the
+  `gate run <command...>`, the workbench (rig's history/exe-move.md, step 4): the
   command on HEAD with the working tree's changes laid over it: the diff
   against HEAD, staged or not, and the untracked files Git does not
   ignore. gitleaks scans those first, and no secret goes aboard.
@@ -75,7 +75,7 @@ defmodule Gate.Run do
               "the working tree could not be laid over #{Check.short(sha)} on #{r.host}; log #{log}"
             )
 
-          :sprite_failed ->
+          :vm_failed ->
             cant_run.("#{r.host} failed after #{secs} s: #{r.why}; log #{log}")
 
           _ ->

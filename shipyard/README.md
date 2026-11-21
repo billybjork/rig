@@ -31,7 +31,7 @@ in the project.
   a digest of 30 lines or fewer on stdout, 2 no verdict (a runner failed
   and no other could rerun its part). It appends one row per run to
   `gate_log`: at, sha, tier, verdict, wall seconds, then each part as
-  `name:seconds:sprite:result`, with `:reran-from-<sprite>` on a part that
+  `name:seconds:host:result`, with `:reran-from-<host>` on a part that
   reran.
 - `tier` (optional) prints the gate's tier, which is passed to `gate` as
   its argument; a change that reaches no deploy target can take a faster
@@ -60,7 +60,7 @@ in the project.
   3. The tier.
   4. The split gate on that exact commit. No verdict leaves the PR queued.
   5. Force-push the branch with lease.
-  6. The `gate` status on the commit, naming the Sprites.
+  6. The `gate` status on the commit.
   7. The merge, per `merge`: `squash` merges with `--match-head-commit`,
      then checks that the landed tree equals the gated one.
 
@@ -122,10 +122,13 @@ in the project.
   and slowest part, and the cause of a red, a retry, or a ship that landed
   but is not live: a red gate is `static` (a part other than the suite),
   `timing` (the digest names a timeout) or `test`; others include
-  `sprite`, `laptop` (no verdict with the laptop overloaded: its 5-minute
-  load at its cores or more), `sprite-rerun`, `main-moved`, `conflict`, `history`, `roll`
-  and `health`. `bin/shipyard list <project> --summary [since]` gives
-  gate time p50 and p90 per tier, the queue wait, and the causes.
+  `vm` (no verdict: a part's VM failed, and its rerun's too), `laptop`
+  (no verdict with the laptop overloaded: its 5-minute load at its cores
+  or more), `rerun` (green, but a part reran), `main-moved`, `conflict`,
+  `history`, `roll` and `health`; rows from before 2026-11-21 say
+  `sprite` and `sprite-rerun`, counted as `vm` and `rerun`. `bin/shipyard
+  list <project> --summary [since]` gives gate time p50 and p90 per tier,
+  the queue wait, and the causes.
 
 ## Where it runs
 

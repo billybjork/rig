@@ -1,7 +1,7 @@
 defmodule Gate.Golden do
   @moduledoc """
   `gate golden <vm>`: the setup rigd's `Fleet` runs on a new golden exe.dev
-  VM before it pauses it (rig's EXE.md, step 3). It sets the VM up and
+  VM before it pauses it (rig's history/exe-move.md, step 3). It sets the VM up and
   runs no part: the tools (rig's image, the project's pins), the project's
   setup (deps), then each warm cache (soco's dialyzer PLT), one short step
   at a time. Ship gates are the verification, so a red `main` keeps no
@@ -52,7 +52,7 @@ defmodule Gate.Golden do
       |> steps(sha, stamp)
       |> Enum.reduce_while(:green, fn job, :green ->
         case attempt(ctx, job, host, 1) do
-          :sprite_failed -> {:halt, :sprite_failed}
+          :vm_failed -> {:halt, :vm_failed}
           _ -> {:cont, :green}
         end
       end)
@@ -64,7 +64,7 @@ defmodule Gate.Golden do
         IO.puts(stamp)
         0
 
-      :sprite_failed ->
+      :vm_failed ->
         2
     end
   end
@@ -100,7 +100,7 @@ defmodule Gate.Golden do
 
     cond do
       r.result == :green -> :green
-      try < @tries and r.result in [:sprite_failed, :red] -> attempt(ctx, job, host, try + 1)
+      try < @tries and r.result in [:vm_failed, :red] -> attempt(ctx, job, host, try + 1)
       true -> r.result
     end
   end

@@ -156,7 +156,7 @@ defmodule Gate.CheckTest do
     assert err =~ "no verdict"
     [row] = Fake.rows(env.logs)
     assert row =~ "\tnone\t"
-    assert row =~ "sprite-failed"
+    assert row =~ "vm-failed"
   end
 
   test "a native crash is given back as crashed and reruns on the next VM leased", env do

@@ -15,7 +15,7 @@ defmodule Shipyard.Entry do
   and `:back` (sent back to its session) end the ship, and `text` is the
   body of its PR comment; `:retry` leaves it queued, and `text` says why.
   `cause` is one word for the trial's record (`Shipyard.Record`): `test`,
-  `timing` or `static` for a red gate, `sprite` for a gate with no
+  `timing` or `static` for a red gate, `vm` for a gate with no
   verdict (`laptop` when the laptop was overloaded as it ended), and the
   step's own word otherwise. `gate` is what the split
   gate's run reported (`%{tier, secs, slowest, reran}`), or `%{}` when no
@@ -174,7 +174,7 @@ defmodule Shipyard.Entry do
     verdict =
       case status do
         0 ->
-          {:ok, "#{command} passed#{on_sprites(run)} at #{now()}"}
+          {:ok, "#{command} passed#{on_vms(run)} at #{now()}"}
 
         1 ->
           {:red,
@@ -182,7 +182,7 @@ defmodule Shipyard.Entry do
            red_cause(out, run)}
 
         2 ->
-          retry("no verdict: a Sprite failed and no other could rerun its part", "sprite", load())
+          retry("no verdict: a part's VM failed, and its rerun's too", "vm", load())
 
         status ->
           retry("check-remote exited #{status}", "gate-exit-#{status}", load())
@@ -195,7 +195,7 @@ defmodule Shipyard.Entry do
   A gate without a verdict, as a retry: its cause is `laptop` when the
   laptop was overloaded as it ended (`load` is `{5-minute load, cores}`),
   since the parts' uploads and polls then outlast their limits whatever the
-  Sprites do (2026-11-16: load 90 on 12 cores, soco #777's gate 4205 s).
+  VMs do (2026-11-16: load 90 on 12 cores, soco #777's gate 4205 s).
   """
   def retry(text, _cause, {load, cores}) when load >= cores,
     do: {:retry, "#{text}, with the laptop overloaded (load #{load} on #{cores} cores)", "laptop"}
@@ -238,8 +238,8 @@ defmodule Shipyard.Entry do
   end
 
   # check-remote's row for this commit (the newest, if it ran twice): its
-  # wall seconds, its slowest part, whether a part reran on the spare, and
-  # each part's name, seconds, Sprite and result.
+  # wall seconds, its slowest part, whether a part reran, and each part's
+  # name, seconds, VM and result.
   defp gate_run(ship, sha) do
     rows =
       case File.read(ship.gate_log) do
@@ -256,12 +256,12 @@ defmodule Shipyard.Entry do
 
         parts =
           Enum.map(parts, fn part ->
-            [name, secs, sprite, result | rest] = String.split(part, ":")
+            [name, secs, host, result | rest] = String.split(part, ":")
 
             %{
               name: name,
               secs: String.to_integer(secs),
-              sprite: sprite,
+              host: host,
               result: result,
               reran: rest != []
             }
@@ -276,18 +276,15 @@ defmodule Shipyard.Entry do
     end
   end
 
-  # Where the gate ran: " on soco-gate-1,2,3,5", each Sprite's name
-  # after its pool's prefix (the name up to its last dash).
-  defp on_sprites(nil), do: ""
+  # Where the gate ran: " on 5 VMs". Each is a fresh copy of the golden,
+  # removed as its part ends, so its name says nothing after.
+  defp on_vms(nil), do: ""
 
-  defp on_sprites(run) do
-    run.parts
-    |> Enum.map(&String.split(&1.sprite, ~r/-(?=[^-]*$)/))
-    |> Enum.chunk_by(&hd/1)
-    |> Enum.map_join(" and ", fn [[prefix | _] | _] = same ->
-      prefix <> "-" <> Enum.map_join(same, ",", &List.last/1)
-    end)
-    |> then(&(" on " <> &1))
+  defp on_vms(run) do
+    case run.parts |> Enum.map(& &1.host) |> Enum.uniq() |> length() do
+      1 -> " on 1 VM"
+      n -> " on #{n} VMs"
+    end
   end
 
   defp unmoved(ship, dir, base) do

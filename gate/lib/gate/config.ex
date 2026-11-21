@@ -6,7 +6,7 @@ defmodule Gate.Config do
     * `name`: the project; its tree on a VM is `~/<name>`, its stamp
       `~/<name>-stamp`, its environment `~/<name>-env.sh`.
     * `pool`: `"exe"`, the one there is: each part on a fresh copy of the
-      golden exe.dev VM that rigd's `Fleet` leases (rig's EXE.md). A
+      golden exe.dev VM that rigd's `Fleet` leases (rig's history/exe-move.md). A
       commit that names another (a Sprite pool, or `"fleet"`, the shared
       one) predates the move; `exe!/1` refuses it.
     * `logs`: where each part's log and `check-remote.tsv` go.
@@ -109,7 +109,7 @@ defmodule Gate.Config do
 
   def exe!(%__MODULE__{pool: pool}) do
     raise Gate.Error,
-          "the Sprites are gone (2026-11-21; rig's EXE.md): this commit's .gate.json says " <>
+          "the Sprites are gone (2026-11-21; rig's history/exe-move.md): this commit's .gate.json says " <>
             "\"pool\": #{JSON.encode!(pool)}; rebase onto origin/main, which gates on exe.dev"
   end
 

@@ -206,7 +206,7 @@ defmodule Shipyard.Worker do
       case result do
         {:merged, merged, text} ->
           Logger.info("ship: ##{pr.number} merged as #{short(merged)}; it waits for a roll")
-          cause = if run.gate[:reran], do: "sprite-rerun"
+          cause = if run.gate[:reran], do: "rerun"
           landed = %{pr: pr, merged: merged, text: text, run: %{run | cause: cause}}
           Status.pr(s.ship, pr, :working, "merged as #{short(merged)}; waiting for a roll")
           {Map.put(s.landed, pr.number, landed), Map.delete(tries, pr.number)}

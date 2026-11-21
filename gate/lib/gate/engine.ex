@@ -21,9 +21,9 @@ defmodule Gate.Engine do
       limit (it is then ended on the VM), the VM's life changed (it
       restarted), the job ended in setup or without a status, or no poll
       got through for `limits.unreachable` seconds. It reruns once, on the
-      next VM `Fleet` leases; failing there too, it is `:sprite_failed`.
+      next VM `Fleet` leases; failing there too, it is `:vm_failed`.
       A named VM's part (`gate golden`) does not rerun: it is
-      `:sprite_failed` at once, and the golden tries the step again;
+      `:vm_failed` at once, and the golden tries the step again;
     * a restart during the `warm` phase relaunches it once on the same VM
       instead, where the cache was half built.
 
@@ -60,7 +60,7 @@ defmodule Gate.Engine do
   Runs each `{job, host}` at once (`host` a VM's name, or `:lease`) and
   returns, in order, each part's
   `%{name, host, result, rc, secs, log, reran_from, why}`; `result` is
-  `:green`, `:red`, `:sprite_failed` or, for `gate run`, `:overlay`.
+  `:green`, `:red`, `:vm_failed` or, for `gate run`, `:overlay`.
   """
   def run(%__MODULE__{} = ctx, assigned) do
     File.mkdir_p!(ctx.config.logs)
@@ -453,7 +453,7 @@ defmodule Gate.Engine do
         again = if part.reran_from, do: ", on its rerun too"
         ctx.say.("#{part.job.name}: a process crashed on #{part.host}#{again} (log #{part.log})")
         give_back(part, "crashed")
-        done(ctx, state, part, :sprite_failed, rc, "a process crashed#{again}")
+        done(ctx, state, part, :vm_failed, rc, "a process crashed#{again}")
 
       true ->
         result = if rc == 0, do: :green, else: :red
@@ -475,7 +475,7 @@ defmodule Gate.Engine do
     else
       ctx.say.("#{part.job.name}: #{part.host} failed: #{why}")
       give_back(part, how)
-      done(ctx, state, part, :sprite_failed, nil, why)
+      done(ctx, state, part, :vm_failed, nil, why)
     end
   end
 

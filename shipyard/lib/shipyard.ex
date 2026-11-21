@@ -29,7 +29,7 @@ defmodule Shipyard do
     * `gate`: the split gate's command, run in the entry's checkout. Exit
       0 is green, 1 red with the digest on stdout, 2 no verdict. It
       appends its row to `gate_log` (`~` expands): at, sha, tier, verdict,
-      wall seconds, then each part as `name:seconds:sprite:result[:reran-from-<sprite>]`;
+      wall seconds, then each part as `name:seconds:host:result[:reran-from-<host>]`;
     * `tier` (optional): a command whose stdout names the gate's tier,
       appended to `gate` as its argument. Without it the tier is `check`
       and `gate` runs as written;

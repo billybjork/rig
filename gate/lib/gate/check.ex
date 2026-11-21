@@ -10,7 +10,7 @@ defmodule Gate.Check do
   project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
   stdout, 2 no verdict (a part's VM failed, and its rerun's too); one row
   per run in `<logs>/check-remote.tsv`: when, sha, tier, verdict, wall
-  seconds, then each part as `name:seconds:<vm>:result` (`sprite-failed`
+  seconds, then each part as `name:seconds:<vm>:result` (`vm-failed`
   for a VM that failed it, the row's old word), with `:reran-from-<vm>` on
   a part that reran. Progress goes to stderr, and each part reports to
   Rex's program status as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
@@ -70,7 +70,7 @@ defmodule Gate.Check do
     verdict =
       cond do
         Enum.any?(results, &(&1.result == :red)) -> "red"
-        Enum.any?(results, &(&1.result == :sprite_failed)) -> "none"
+        Enum.any?(results, &(&1.result == :vm_failed)) -> "none"
         true -> "green"
       end
 
@@ -125,7 +125,7 @@ defmodule Gate.Check do
   end
 
   defp row_part(r) do
-    result = if r.result == :sprite_failed, do: "sprite-failed", else: to_string(r.result)
+    result = if r.result == :vm_failed, do: "vm-failed", else: to_string(r.result)
     reran = if r.reran_from, do: ":reran-from-#{r.reran_from}", else: ""
     "#{r.name}:#{r.secs}:#{r.host}:#{result}#{reran}"
   end

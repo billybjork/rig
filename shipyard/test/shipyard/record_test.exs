@@ -3,7 +3,7 @@ defmodule Shipyard.RecordTest do
 
   @moduletag :tmp_dir
 
-  test "the summary gives gate time p50 and p90 per tier, the queue wait, and the causes, from a date",
+  test "the summary gives gate time p50 and p90 per tier, the queue wait, and the causes (old names as now), from a date",
        %{tmp_dir: tmp} do
     ship = Shipyard.config(home: tmp)
     pr = fn n -> %{number: n, title: "change\t#{n}"} end
@@ -29,7 +29,7 @@ defmodule Shipyard.RecordTest do
              "gate check: 4 run(s), p50 250 s, p90 300 s; slowest part: test-2 3, test-3 1",
              "gate check-fast: 1 run(s), p50 190 s, p90 190 s; slowest part: test-3 1",
              "queue wait: 5 take(s), p50 5 s, p90 30 s, max 30 s",
-             "causes: conflict 1, main-moved 1, sprite-rerun 1, timing 1"
+             "causes: conflict 1, main-moved 1, rerun 1, timing 1"
            ]
 
     future = Date.utc_today() |> Date.add(1) |> Date.to_iso8601()

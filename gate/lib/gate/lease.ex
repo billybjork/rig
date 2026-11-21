@@ -32,7 +32,7 @@ defmodule Gate.Lease do
   returns the lease's pid. A ship worker's gate (`SHIPYARD_STATUS_ID` set)
   asks as `ship`, ahead of every session's own gate. `opts`: `warm`, the
   keys of the warm caches the part needs: a key the golden VM lacks gets a
-  bigger VM, since soco's cold dialyzer PLT needs 16 GB (EXE.md, check 0d).
+  bigger VM, since soco's cold dialyzer PLT needs 16 GB (rig's history/exe-move.md, check 0d).
   """
   def request(project, part, key, opts \\ []) do
     owner = self()
@@ -85,8 +85,7 @@ defmodule Gate.Lease do
 
       receive do
         {:release, result} ->
-          # `sprite`: Fleet's word for the leased host, from before exe.dev.
-          send_line(sock, %{release: %{sprite: host, result: result}})
+          send_line(sock, %{release: %{host: host, result: result}})
           :gen_tcp.recv(sock, 0, 30_000)
           :gen_tcp.close(sock)
       end

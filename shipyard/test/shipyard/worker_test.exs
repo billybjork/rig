@@ -294,7 +294,7 @@ defmodule Shipyard.WorkerTest do
     assert origin(o, "main^{tree}") == origin(o, "#{second_gate}^{tree}")
 
     assert stamp_one =~
-             ~r/^#{first_gate} bash scripts\/check-remote.sh check passed on proj-gate-1,5 at /
+             ~r/^#{first_gate} bash scripts\/check-remote.sh check passed on 2 VMs at /
 
     roll = "The roll of `#{String.slice(rolled, 0, 8)}`, covering #12, #11, rolled web;"
 
@@ -307,7 +307,7 @@ defmodule Shipyard.WorkerTest do
 
     # Each row has its label's wait and its gate; a part that reran on the
     # spare marks the green gate.
-    gated = %{gate: "14", tier: "check", slowest: "test-1", cause: "sprite-rerun", waited: true}
+    gated = %{gate: "14", tier: "check", slowest: "test-1", cause: "rerun", waited: true}
 
     assert rows(o) == [
              Map.merge(gated, %{pr: "12", outcome: "live"}),
@@ -399,15 +399,15 @@ defmodule Shipyard.WorkerTest do
     assert [%{"message" => "sent back.\nclaude/flaky-pool"}] = pushes(o)
 
     assert comments(o, 7) =~
-             "ship: sent back. No result after 2 tries; the last: no verdict: a Sprite failed"
+             "ship: sent back. No result after 2 tries; the last: no verdict: a part's VM failed"
 
     assert origin(o, "claude/flaky-pool") == head
 
     # Both runs are rows with their cause; only the first waited on the
     # label.
     assert [
-             %{outcome: "retry", cause: "sprite", waited: true},
-             %{outcome: "back", cause: "sprite", waited: false}
+             %{outcome: "retry", cause: "vm", waited: true},
+             %{outcome: "back", cause: "vm", waited: false}
            ] = rows(o)
   end
 

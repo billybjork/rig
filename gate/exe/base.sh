@@ -1,8 +1,8 @@
 #!/bin/bash
-# What a bare `ubuntu:26.04` exe.dev VM lacks that a Fly Sprite's base image
-# supplied (rig's EXE.md, step 1). Runs as root on the golden VM before
-# gate/image/provision.sh, which then runs as `gate`; provision.sh stays as
-# it is, since its hash is the Sprite pool's stamp.
+# What a bare `ubuntu:26.04` exe.dev VM lacks that a Fly Sprite's base
+# image supplied (rig's history/exe-move.md, step 1). Runs as root on the
+# golden VM before gate/image/provision.sh, which then runs as `gate`;
+# provision.sh stays as it is, since its hash is each project's stamp.
 #
 #   ssh <vm>.exe.xyz 'bash -s' < gate/exe/base.sh
 #

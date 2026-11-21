@@ -12,9 +12,10 @@ defmodule Shipyard.Record do
     * `gate`, `tier` and `slowest`: the split gate's wall seconds, its
       tier, and its slowest part, when a gate ran;
     * `cause`: why a run did not land live (`Shipyard.Entry`, `Shipyard.Roll`:
-      `test`, `timing`, `static`, `sprite`, `main-moved`, ...), or
-      `sprite-rerun` for a green gate one of whose parts reran on the
-      spare;
+      `test`, `timing`, `static`, `vm`, `main-moved`, ...), or `rerun`
+      for a green gate one of whose parts reran on another VM (rows from
+      before 2026-11-21 say `sprite` and `sprite-rerun`, which `summary/2`
+      counts as these);
     * `title`, last.
 
   The PR stays the record of each ship; these say what this host is doing
@@ -122,7 +123,10 @@ defmodule Shipyard.Record do
           "queue wait: #{length(waits)} take(s), p50 #{pct(waits, 50)} s, p90 #{pct(waits, 90)} s, max #{Enum.max(waits)} s"
 
     causes =
-      case by.(:cause) |> Enum.frequencies() |> Enum.sort_by(fn {_, n} -> -n end) do
+      case by.(:cause)
+           |> Enum.map(&cause/1)
+           |> Enum.frequencies()
+           |> Enum.sort_by(fn {_, n} -> -n end) do
         [] -> "causes: none"
         counts -> "causes: " <> Enum.map_join(counts, ", ", fn {c, n} -> "#{c} #{n}" end)
       end
@@ -132,6 +136,11 @@ defmodule Shipyard.Record do
       | gates
     ] ++ [wait, causes]
   end
+
+  # The causes' names from the Sprite days, as they are now.
+  defp cause("sprite"), do: "vm"
+  defp cause("sprite-rerun"), do: "rerun"
+  defp cause(cause), do: cause
 
   # Nearest rank: the smallest value at or above `p` percent of them.
   defp pct(values, p) do

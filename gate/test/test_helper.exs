@@ -250,7 +250,7 @@ defmodule Gate.FakeFleet do
         %{"lease" => lease} ->
           grant(%{st | waiting: st.waiting ++ [sock], leases: [lease | st.leases]})
 
-        %{"release" => %{"sprite" => s, "result" => r}} ->
+        %{"release" => %{"host" => s, "result" => r}} ->
           :gen_tcp.send(sock, JSON.encode!(%{released: s}) <> "\n")
           back(st, sock, s, r)
       end
