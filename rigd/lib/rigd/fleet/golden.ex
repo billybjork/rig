@@ -48,22 +48,22 @@ defmodule Rigd.Fleet.Golden do
   end
 
   @doc """
-  The project's setup on the VM `sprite` (`<vm>.exe.xyz`): `{:green, name,
+  The project's setup on the VM `vm` (a `<vm>.exe.xyz` host): `{:green, name,
   keys}`, `{:red, why}` (`gate golden` exited 1: not the VM's doing),
-  `{:sprite_failed, why}`, or `{:laptop, why}` when git failed here (no
+  `{:vm_failed, why}`, or `{:laptop, why}` when git failed here (no
   network, DNS): not the VM's doing either.
   """
-  def run(gate, dir, sprite) do
+  def run(gate, dir, vm) do
     tmp =
-      Path.join(System.tmp_dir!(), "rigd-golden-#{sprite}-#{System.unique_integer([:positive])}")
+      Path.join(System.tmp_dir!(), "rigd-golden-#{vm}-#{System.unique_integer([:positive])}")
 
     with :ok <- fetch(dir),
          {:ok, json} <- git(dir, ["show", "origin/main:.gate.json"]),
-         :ok <- prune(dir, sprite),
+         :ok <- prune(dir, vm),
          {:ok, _} <- git(dir, ["worktree", "add", "-q", "--detach", tmp, "origin/main"]) do
       name = JSON.decode!(json)["name"]
-      log = log_path(sprite, name)
-      {out, status} = cmd(gate, ["golden", sprite], tmp, 4 * 3600)
+      log = log_path(vm, name)
+      {out, status} = cmd(gate, ["golden", vm], tmp, 4 * 3600)
       File.write!(log, out)
       {keys, _} = cmd(gate, ["keys", "HEAD"], tmp, 120)
       git(dir, ["worktree", "remove", "--force", tmp])
@@ -71,20 +71,20 @@ defmodule Rigd.Fleet.Golden do
       case status do
         0 -> {:green, name, parse_keys(keys)}
         1 -> {:red, "#{name}'s golden setup exited 1 (#{log})"}
-        _ -> {:sprite_failed, "#{name}'s golden setup: exit #{status} (#{log})"}
+        _ -> {:vm_failed, "#{name}'s golden setup: exit #{status} (#{log})"}
       end
     else
       {:error, why} -> {:laptop, why}
     end
   end
 
-  # The worktrees an earlier run on `sprite` left when rigd was killed
+  # The worktrees an earlier run on `vm` left when rigd was killed
   # under it: none runs now, since a golden is made one project at a time.
   @doc false
-  def prune(dir, sprite) do
+  def prune(dir, vm) do
     with {:ok, list} <- git(dir, ["worktree", "list", "--porcelain"]) do
       for "worktree " <> path <- String.split(list, "\n"),
-          String.starts_with?(Path.basename(path), "rigd-golden-#{sprite}-"),
+          String.starts_with?(Path.basename(path), "rigd-golden-#{vm}-"),
           do: git(dir, ["worktree", "remove", "--force", path])
 
       with {:ok, _} <- git(dir, ["worktree", "prune"]), do: :ok
@@ -135,11 +135,11 @@ defmodule Rigd.Fleet.Golden do
     )
   end
 
-  defp log_path(sprite, name) do
+  defp log_path(vm, name) do
     dir = Path.expand("~/Library/Logs/rigd-fleet")
     File.mkdir_p!(dir)
     stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S")
-    Path.join(dir, "#{sprite}-#{name}-#{stamp}.log")
+    Path.join(dir, "#{vm}-#{name}-#{stamp}.log")
   end
 
   @doc "The last non-blank line of a command's output, for a one-line reason."

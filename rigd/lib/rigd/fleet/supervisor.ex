@@ -5,7 +5,7 @@ defmodule Rigd.Fleet.Supervisor do
   checkouts), `gate` (rig's `gate/bin/gate`), `golden`
   (`Rigd.Fleet.Golden`), `socket`, `deadline` (rig's
   `gate/libexec/deadline`), `exe` (`fleet.json`'s `exe` object) and `ssh`.
-  The Sprite pool it also ran was retired on 2026-11-21 (rig's `EXE.md`).
+  The Sprite pool it also ran was retired on 2026-11-21 (rig's `history/exe-move.md`).
   """
 
   use Supervisor

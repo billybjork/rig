@@ -1,5 +1,11 @@
 # exe.dev: the gate pool and the workbench
 
+**Done 2026-11-21 through step 4**; step 5 is Billy's, later (rig's
+`README.md`, "Next"). This file, once rig's `EXE.md`, is the plan and its
+record. What is live is in `gate/README.md` and `rigd/README.md` ("Fleet");
+`gate/FLEET.md` is now `history/sprite-fleet.md`, and `sprite/job.sh` is
+`gate/exe/job.sh`.
+
 The plan to move rig's remote compute from Fly Sprites to exe.dev, and to
 use it beyond the gate. Written 2026-11-20 after a day's trial; Billy agreed
 to the direction the same day ("this may be enough evidence to just move

@@ -3,7 +3,7 @@ defmodule Rigd.Heavy do
   The laptop's heavy local work, queued (Billy, 2026-11-16). On that day
   five sessions' media jobs and an eval uploading video ran at once: load
   90 on 12 cores, swap full, the uplink saturated, and the gates' own
-  `sprite` calls outlasted their limits, so ships that take 5 minutes took
+  calls to their hosts outlasted their limits, so ships that take 5 minutes took
   70 and gave no verdict.
 
   **Slots.** A job takes one with `bin/heavy cpu|net -- <command>` (or

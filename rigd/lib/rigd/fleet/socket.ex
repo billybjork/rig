@@ -5,7 +5,7 @@ defmodule Rigd.Fleet.Socket do
 
       → {"lease": {"project": "heaters", "part": "test-1", "pool": "exe", "warm": ["ae71…"], "priority": "ship"}}
       ← {"granted": "rig-part-1120-2301-a1b2c3.exe.xyz"}   (when a copy answers; until then nothing)
-      → {"release": {"sprite": "rig-part-1120-2301-a1b2c3.exe.xyz", "result": "green"}}
+      → {"release": {"host": "rig-part-1120-2301-a1b2c3.exe.xyz", "result": "green"}}
       ← {"released": "rig-part-1120-2301-a1b2c3.exe.xyz"}
       → {"status": {}}
       ← {"exe": {...}}
@@ -16,10 +16,12 @@ defmodule Rigd.Fleet.Socket do
   dies closes its connection, and the VM it held is removed (`Rigd.Fleet.Exe`).
   `result` is `green`, `red`, `restarted`, `failed` or `crashed`; a VM is
   removed whatever it is. `priority` `ship` (a ship worker's gate) waits
-  ahead of every other lease; anything else is a session's.
+  ahead of every other lease; anything else is a session's. A release
+  may name its VM as `sprite`, the key's name until 2026-11-21, which a
+  gate begun on an older rig still sends.
 
   A lease without `"pool": "exe"` asked for the Sprite pool, retired on
-  2026-11-21 (rig's `EXE.md`), and is refused with the reason: it comes
+  2026-11-21 (rig's `history/exe-move.md`), and is refused with the reason: it comes
   from a branch cut before its project's `.gate.json` moved to exe.dev.
 
   `drain` stops granting for a minute, renewed by each `drain`
@@ -67,9 +69,9 @@ defmodule Rigd.Fleet.Socket do
         :inet.setopts(sock, active: :once)
         serve(sock, handle(sock, decode(line), leased))
 
-      {:fleet_granted, sprite} ->
-        reply(sock, %{granted: sprite})
-        serve(sock, sprite)
+      {:fleet_granted, host} ->
+        reply(sock, %{granted: host})
+        serve(sock, host)
 
       {:tcp_closed, ^sock} ->
         :ok
@@ -106,10 +108,14 @@ defmodule Rigd.Fleet.Socket do
     nil
   end
 
-  defp handle(sock, %{"release" => %{"sprite" => sprite, "result" => result}}, sprite)
+  defp handle(sock, %{"release" => %{"sprite" => host} = release}, host),
+    do:
+      handle(sock, %{"release" => release |> Map.delete("sprite") |> Map.put("host", host)}, host)
+
+  defp handle(sock, %{"release" => %{"host" => host, "result" => result}}, host)
        when result in ~w(green red restarted failed crashed) do
-    case Rigd.Fleet.Exe.release(sprite, self(), result) do
-      :ok -> reply(sock, %{released: sprite})
+    case Rigd.Fleet.Exe.release(host, self(), result) do
+      :ok -> reply(sock, %{released: host})
       {:error, why} -> reply(sock, %{error: "#{why}"})
     end
 

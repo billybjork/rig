@@ -149,8 +149,8 @@ defmodule Rigd.FleetExeTest do
     end
   end
 
-  defp release(sock, host, result \\ "green") do
-    :ok = :gen_tcp.send(sock, JSON.encode!(%{release: %{sprite: host, result: result}}) <> "\n")
+  defp release(sock, host, result \\ "green", key \\ :host) do
+    :ok = :gen_tcp.send(sock, JSON.encode!(%{release: %{key => host, result: result}}) <> "\n")
     recv(sock)
   end
 
@@ -192,6 +192,18 @@ defmodule Rigd.FleetExeTest do
     assert release(a, host, "red") == %{"released" => host}
     until(fn -> name not in vms(root) end)
     assert Exe.status().leases == %{}
+  end
+
+  test "a release naming its VM as `sprite`, the key before 2026-11-21, removes it too",
+       %{root: root, opts: opts} do
+    golden(root)
+    start(opts)
+    until(&ready?/0)
+
+    a = lease(opts)
+    assert %{"granted" => host} = recv(a)
+    assert release(a, host, "green", :sprite) == %{"released" => host}
+    until(fn -> String.replace_suffix(host, ".exe.xyz", "") not in vms(root) end)
   end
 
   test "a part needing a warm cache the golden lacks gets 8 vCPU / 16 GB", %{

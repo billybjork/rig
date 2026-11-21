@@ -1,6 +1,6 @@
 defmodule Rigd.Fleet.Exe do
   @moduledoc """
-  The gate's VMs on exe.dev (rig's EXE.md, step 3): no standing pool. A
+  The gate's VMs on exe.dev (rig's history/exe-move.md, step 3): no standing pool. A
   lease is a fresh copy of the golden VM (`ssh exe.dev cp <golden> <name>
   --standalone`, about a second, warm), granted as `<name>.exe.xyz` once
   it answers SSH, and a release removes it (`rm`), whatever the part's
@@ -394,7 +394,7 @@ defmodule Rigd.Fleet.Exe do
   defp done(st, {:refresh, name}, result) do
     {kind, why} =
       case result do
-        {kind, why} when kind in [:red, :laptop, :sprite_failed, :error] -> {kind, why}
+        {kind, why} when kind in [:red, :laptop, :vm_failed, :error] -> {kind, why}
         other -> {:error, inspect(other)}
       end
 

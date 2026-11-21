@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # rigd, the daemon that keeps the Mac awake while work runs, pushes when
-# Billy is away, and marks tabs (~/dev/rig/rigd, README "rigd").
+# Billy is away, marks tabs, and leases the gate's VMs (rigd/README.md).
 #
 #   rigd install     build the release, drain Fleet, install the LaunchAgent, (re)start it
 #   rigd status      what it sees: what runs, presence, keep-awake
@@ -41,7 +41,7 @@ main() {
         "awake:     \(if .awake.holding then "holding" else "not holding" end); disablesleep \(if .awake.sleep_disabled then "set" else "clear" end) (\(.awake.why))"' "$status"
       ;;
     fleet)
-      # Fleet's socket answers one JSON line per message (gate/FLEET.md).
+      # Fleet's socket answers one JSON line per message (Rigd.Fleet.Socket).
       python3 - <<'PY'
 import json, os, socket, sys
 s = socket.socket(socket.AF_UNIX)
