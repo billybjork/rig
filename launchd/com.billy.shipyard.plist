@@ -13,7 +13,7 @@
 
   launchd starts it with a bare PATH, so the plist names the directories
   the workers and their projects' gates and rolls call into (asdf shims for
-  mix and node, Homebrew for gh and jq, ~/.local/bin for sprite); add one
+  mix and node, Homebrew for gh and jq, ~/.local/bin for uv and bws); add one
   when a tool moves.
 
   Remove with `launchctl bootout gui/$(id -u)/com.billy.shipyard`.
