@@ -1,12 +1,11 @@
 defmodule Rigd.Fleet.Supervisor do
   @moduledoc """
-  The fleet's processes: `Rigd.Fleet.CLI`, a `Rigd.Fleet.Sprite` per
-  Sprite, `Rigd.Fleet`, and the socket with a process per connection.
-  `opts`: `sprites`, `projects` (their primary checkouts), `gate` (rig's
-  `gate/bin/gate`), `golden` (`Rigd.Fleet.Golden`), `socket`, `cli` (the
-  `sprite` CLI), `deadline` (rig's `gate/libexec/deadline`), and for
-  exe.dev (`Rigd.Fleet.Exe`, when `exe` is set) `exe` (`fleet.json`'s
-  `exe` object) and `ssh`.
+  The fleet's processes: `Rigd.Fleet.Exe` (when `exe` is set) and the
+  socket with a process per connection. `opts`: `projects` (their primary
+  checkouts), `gate` (rig's `gate/bin/gate`), `golden`
+  (`Rigd.Fleet.Golden`), `socket`, `deadline` (rig's
+  `gate/libexec/deadline`), `exe` (`fleet.json`'s `exe` object) and `ssh`.
+  The Sprite pool it also ran was retired on 2026-11-21 (rig's `EXE.md`).
   """
 
   use Supervisor
@@ -19,13 +18,11 @@ defmodule Rigd.Fleet.Supervisor do
     gate = Path.dirname(file)
 
     [
-      sprites: json["sprites"],
       projects: Enum.map(json["projects"], &Path.expand/1),
       gate: Path.join(gate, "bin/gate"),
       deadline: Path.join(gate, "libexec/deadline"),
       golden: Rigd.Fleet.Golden,
       socket: Path.expand("~/Library/Caches/rigd/fleet.sock"),
-      cli: Path.expand(json["cli"] || "~/.local/bin/sprite"),
       exe: json["exe"],
       ssh: json["ssh"] || "/usr/bin/ssh"
     ]
@@ -34,13 +31,7 @@ defmodule Rigd.Fleet.Supervisor do
   @impl true
   def init(opts) do
     children =
-      [
-        {Rigd.Fleet.CLI, opts},
-        {Registry, keys: :unique, name: Rigd.Fleet.Registry},
-        {DynamicSupervisor, name: Rigd.Fleet.Sprites, strategy: :one_for_one},
-        {Rigd.Fleet, opts}
-      ] ++
-        if(opts[:exe], do: [{Rigd.Fleet.Exe, opts}], else: []) ++
+      if(opts[:exe], do: [{Rigd.Fleet.Exe, opts}], else: []) ++
         [
           {Task.Supervisor, name: Rigd.Fleet.Conns},
           {Rigd.Fleet.Socket, opts}

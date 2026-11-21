@@ -29,13 +29,12 @@ defmodule Gate.Engine do
   segfaults on soco's gate Sprites, 2026-10), so one bad Sprite costs a
   rerun, not the gate.
 
-  On the shared pool (a job assigned `:lease`), each part, its first run
-  and its rerun alike, waits for a Sprite leased from rigd's `Fleet`
-  (`Gate.Lease`) and gives it back as it ends, saying how: `green`, `red`,
-  `restarted` (its Sprite restarted or went unreachable), `failed` (the
-  Sprite failed it otherwise) or `crashed`. A part reruns on whichever
-  Sprite `Fleet` leases next, any project's. `Fleet` going mid-gate
-  leaves no verdict.
+  On exe.dev (a job assigned `:lease`), each part, its first run and its
+  rerun alike, waits for a VM leased from rigd's `Fleet` (`Gate.Lease`)
+  and gives it back as it ends, saying how: `green`, `red`, `restarted`
+  (its VM restarted or went unreachable), `failed` (the VM failed it
+  otherwise) or `crashed`. A part reruns on the next VM `Fleet` leases, a
+  fresh copy. `Fleet` going mid-gate leaves no verdict.
 
   A dropped keeper (the TTY session that keeps the Sprite awake) is
   relaunched while its job runs.

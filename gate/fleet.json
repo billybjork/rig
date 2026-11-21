@@ -1,5 +1,4 @@
 {
-  "sprites": [],
   "projects": ["~/dev/soco", "~/dev/heaters"],
   "exe": {"golden": "rig-golden", "cpu": 4, "memory": "8GB", "big": {"cpu": 8, "memory": "16GB"}, "max": 15}
 }

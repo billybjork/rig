@@ -239,10 +239,17 @@ once on the Sprites since Nov 4. If it keeps showing, it is soco's to
 make the test hold on 4 vCPU (not by weakening it), or test parts get
 more cores.
 
-What is left of step 3: retire the Sprite pool once Billy says so (no
-project gates on it now). Keep the Sprite backend (`gate/lib/gate/sprite.ex`,
-`Rigd.Fleet`'s Sprite side) until then; soco's dev Sprite `soco-dev-1` and
-heaters' `heaters-dev-1` are step 4's (the workbench).
+Step 3 done 2026-11-21 (Billy's go): the Sprite pool is retired.
+`rig-gate-1` to `-10` are destroyed, `gate/fleet.json` names no Sprites,
+and rigd's Sprite side of `Fleet` (`Rigd.Fleet`, `Fleet.Sprite`,
+`Fleet.CLI`, the nightly restore) is removed; `Fleet` is now
+`Rigd.Fleet.Exe` and the socket. A `"pool": "fleet"` gate (a branch cut
+before its project moved) is refused by `gate check` and by `Fleet`,
+saying to rebase. What stays for step 4: the Sprite backend
+(`gate/lib/gate/sprite.ex`, `sprite/*.sh`, `local.sh`) and `gate pool`,
+which `gate run` uses on the dev Sprites `soco-dev-1` and
+`heaters-dev-1`, and the `sprite` login; the workbench replaces them,
+and then they go.
 
 ### 4. The workbench
 

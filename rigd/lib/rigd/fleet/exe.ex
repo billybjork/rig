@@ -12,8 +12,9 @@ defmodule Rigd.Fleet.Exe do
   the suites do not scale past 4, check 0d), and 8 / 16 (`exe.big`) for a
   part that needs a warm cache whose key the golden lacks: soco's cold
   dialyzer PLT was OOM-killed at 8 GB. At most `exe.max` leases at once;
-  the rest wait, a ship's gate ahead of every session's (as on the Sprite
-  pool, `Rigd.Fleet`). A copy that fails is tried again for the same
+  the rest wait, a ship's gate ahead of every session's: a session's
+  `gate check` once held soco's ship worker for 19 minutes (2026-11-16).
+  A copy that fails is tried again for the same
   waiter after a pause that grows to 5 minutes.
 
   The golden is the newest paused VM named `<exe.golden>*` whose comment
@@ -31,13 +32,17 @@ defmodule Rigd.Fleet.Exe do
   (`rig-part-*`) not leased, and golden-named VMs that are neither the
   golden nor the one being made (a refresh that rigd's restart cut off).
 
-  `drain/0` stops leasing and refreshing for a minute, as `Rigd.Fleet`'s.
+  `drain/0` (`bin/rigd install` before it restarts rigd) stops leasing
+  and refreshing for a minute, renewed by each call: the leases held run
+  out, the waiters stay queued, and a gate whose connection closes before
+  its grant connects again (`Gate.Lease`), so a restart costs no gate
+  anything.
   """
 
   use GenServer
   require Logger
 
-  alias Rigd.Fleet.Sprite
+  alias Rigd.Fleet.Golden
 
   @every 10 * 60 * 1000
   @drain_ms 60_000
@@ -70,7 +75,7 @@ defmodule Rigd.Fleet.Exe do
     vms
     |> Enum.filter(&(String.starts_with?(&1["vm_name"], prefix) and &1["status"] == "paused"))
     |> Enum.flat_map(fn vm ->
-      if keys = Sprite.golden_stamps(vm["comment"] || ""),
+      if keys = Golden.comment_keys(vm["comment"] || ""),
         do: [{vm["created_at"] || "", %{name: vm["vm_name"], keys: keys}}],
         else: []
     end)
@@ -106,10 +111,15 @@ defmodule Rigd.Fleet.Exe do
   end
 
   defp golden_vm?(vm),
-    do: vm["status"] == "paused" and Sprite.golden_stamps(vm["comment"] || "") != nil
+    do: vm["status"] == "paused" and Golden.comment_keys(vm["comment"] || "") != nil
 
-  @doc "The queue with `waiter` behind every waiter of its priority or higher."
-  def enqueue(queue, waiter), do: Rigd.Fleet.enqueue(queue, waiter)
+  @doc "The queue with `waiter` behind every waiter of its priority or higher: ships, then sessions."
+  def enqueue(queue, %{priority: :ship} = waiter) do
+    {ships, sessions} = Enum.split_with(queue, &(Map.get(&1, :priority) == :ship))
+    ships ++ [waiter] ++ sessions
+  end
+
+  def enqueue(queue, waiter), do: queue ++ [waiter]
 
   # --- the process
 
@@ -350,7 +360,7 @@ defmodule Rigd.Fleet.Exe do
   end
 
   defp done(st, {:refresh, name}, {:golden, golden}) do
-    Logger.info("fleet: exe: #{name} is the golden (#{Sprite.golden_comment(golden.keys)})")
+    Logger.info("fleet: exe: #{name} is the golden (#{Golden.comment(golden.keys)})")
     old = if st.golden && st.golden.name != name, do: [st.golden.name], else: []
 
     %{
@@ -489,7 +499,7 @@ defmodule Rigd.Fleet.Exe do
          :ok <- answers(opts, host),
          {:ok, keys} <- setups(opts, host),
          :ok <- api(opts, ["pause", name], 300),
-         :ok <- api(opts, ["comment", name, Sprite.golden_comment(keys)], 60) do
+         :ok <- api(opts, ["comment", name, Golden.comment(keys)], 60) do
       {:golden, %{name: name, keys: keys}}
     end
   end
@@ -497,7 +507,7 @@ defmodule Rigd.Fleet.Exe do
   # Every project's `gate golden` on `host`, in turn.
   defp setups(opts, host) do
     Enum.reduce_while(opts[:projects], {:ok, %{}}, fn dir, {:ok, acc} ->
-      case opts[:golden].run(opts[:gate], dir, host, :keys) do
+      case opts[:golden].run(opts[:gate], dir, host) do
         {:green, _project, keys} -> {:cont, {:ok, Map.merge(acc, keys)}}
         other -> {:halt, other}
       end
@@ -518,11 +528,11 @@ defmodule Rigd.Fleet.Exe do
       {out, 0} ->
         case JSON.decode(out) do
           {:ok, %{"vms" => vms}} -> {:ok, vms}
-          _ -> {:error, "ls: #{Rigd.Fleet.CLI.last_line(out)}"}
+          _ -> {:error, "ls: #{Golden.last_line(out)}"}
         end
 
       {out, status} ->
-        {:error, "ls exited #{status}: #{Rigd.Fleet.CLI.last_line(out)}"}
+        {:error, "ls exited #{status}: #{Golden.last_line(out)}"}
     end
   end
 
@@ -531,11 +541,11 @@ defmodule Rigd.Fleet.Exe do
     case call(opts, ["exe.dev" | args], secs) do
       {out, 0} ->
         if out =~ ~r/^(error|Error)\b/m,
-          do: {:error, "#{hd(args)}: #{Rigd.Fleet.CLI.last_line(out)}"},
+          do: {:error, "#{hd(args)}: #{Golden.last_line(out)}"},
           else: :ok
 
       {out, status} ->
-        {:error, "#{hd(args)} exited #{status}: #{Rigd.Fleet.CLI.last_line(out)}"}
+        {:error, "#{hd(args)} exited #{status}: #{Golden.last_line(out)}"}
     end
   end
 
@@ -551,7 +561,7 @@ defmodule Rigd.Fleet.Exe do
         :ok
 
       {out, status} when tries <= 1 ->
-        {:error, "#{host} does not answer SSH (#{status}: #{Rigd.Fleet.CLI.last_line(out)})"}
+        {:error, "#{host} does not answer SSH (#{status}: #{Golden.last_line(out)})"}
 
       _ ->
         Process.sleep(Keyword.get(opts, :answer_ms, 2000))

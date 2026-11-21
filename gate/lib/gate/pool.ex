@@ -22,7 +22,7 @@ defmodule Gate.Pool do
     do:
       raise(
         Gate.Error,
-        "this project gates on the shared pool, which rigd's Fleet keeps (bin/rigd fleet; rig's gate/FLEET.md)"
+        "this project gates on exe.dev VMs that rigd's Fleet leases (bin/rigd fleet; rig's gate/FLEET.md); `gate pool` is for a project's own Sprites"
       )
 
   def main(config, ["status"]), do: status(config)

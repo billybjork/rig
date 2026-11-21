@@ -612,14 +612,24 @@ defmodule Gate.CheckTest do
     end
   end
 
-  describe "on the shared pool" do
+  describe "on the retired shared pool" do
     @describetag gate: %{"pool" => "fleet"}
+
+    test "a commit whose .gate.json names it is refused, saying why", env do
+      error = assert_raise Gate.Error, fn -> check(env, [{"static", "bash cmd.sh green"}]) end
+      assert error.message =~ "the shared Sprite pool is retired"
+      assert error.message =~ "rebase onto origin/main"
+    end
+  end
+
+  describe "leased from Fleet" do
+    @describetag gate: %{"pool" => "exe"}
 
     setup do
       on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
     end
 
-    test "each part on a Sprite the fleet leases as one frees; each given back with its result",
+    test "each part on a host the fleet leases as one frees; each given back with its result",
          env do
       fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
 
@@ -631,7 +641,7 @@ defmodule Gate.CheckTest do
         ])
 
       assert status == 1, err
-      assert err =~ "as 3 parts on the shared pool"
+      assert err =~ "as 3 parts on exe.dev"
       released = Gate.FakeFleet.released(fleet)
       assert Enum.sort(Enum.map(released, &elem(&1, 1))) == ~w(green green red)
       [row] = Fake.rows(env.logs)
@@ -701,7 +711,7 @@ defmodule Gate.CheckTest do
     end
 
     @tag gate: %{
-           "pool" => "fleet",
+           "pool" => "exe",
            "limits" => %{
              "poll" => 0.1,
              "run" => 20,

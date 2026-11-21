@@ -1,17 +1,16 @@
 defmodule Gate.Lease do
   @moduledoc """
-  A Sprite leased from rigd's `Fleet` (`.gate.json`'s `"pool": "fleet"`),
-  on its socket (`$GATE_FLEET_SOCKET`, else
+  An exe.dev VM leased from rigd's `Fleet` (`.gate.json`'s `"pool":
+  "exe"`), on its socket (`$GATE_FLEET_SOCKET`, else
   `~/Library/Caches/rigd/fleet.sock`). Each lease is a process holding
   its own connection, linked to the gate: a gate that dies closes it, and
-  `Fleet` ends that part's processes on the Sprite before leasing it
-  again. The process tells its owner `{:fleet_granted, key, sprite, pid}`
-  once a Sprite is leased, or `{:fleet_lost, key, why}` when the
+  `Fleet` removes the VM, which ends that part. The process tells its
+  owner `{:fleet_granted, key, sprite, pid}` once a VM is leased, or `{:fleet_lost, key, why}` when the
   connection went first and `Fleet` did not come back within
   `reconnect/0` (5 minutes): `bin/rigd install` drains Fleet and restarts
   rigd, and a waiter that connects again keeps its gate. A lease lost
-  after its grant is not asked for again: its part ran on a Sprite that
-  `Fleet` takes back.
+  after its grant is not asked for again: its part ran on a VM that
+  `Fleet` removes.
   """
 
   def socket,

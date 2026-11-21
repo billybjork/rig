@@ -55,9 +55,8 @@ defmodule Rigd.FleetExeTest do
   defmodule Golden do
     @moduledoc "Each project's keys and setup as the test sets them in persistent_term."
     def keys(_gate, _dir), do: {:ok, :persistent_term.get({__MODULE__, :target})}
-    def stamp(_gate, _dir), do: {:ok, "proj", "0123456789abcdef"}
 
-    def run(_gate, _dir, host, :keys) do
+    def run(_gate, _dir, host) do
       File.write!(:persistent_term.get({__MODULE__, :log}), "golden #{host}\n", [:append])
 
       case :persistent_term.get({__MODULE__, :result}, nil) do
@@ -79,12 +78,10 @@ defmodule Rigd.FleetExeTest do
     on_exit(fn -> :persistent_term.erase({Golden, :result}) end)
 
     opts = [
-      sprites: [],
       projects: ["/nowhere/proj"],
       gate: "/nowhere/gate/bin/gate",
       golden: Golden,
       socket: Path.join(System.tmp_dir!(), "fleet-#{System.unique_integer([:positive])}.sock"),
-      cli: "/nowhere/sprite",
       deadline: Path.expand("../../gate/libexec/deadline", __DIR__),
       ssh: ssh,
       answer_ms: 10,
@@ -103,7 +100,7 @@ defmodule Rigd.FleetExeTest do
   end
 
   defp golden(root, keys \\ @keys, name \\ "rig-golden"),
-    do: vm(root, name, "paused", Rigd.Fleet.Sprite.golden_comment(keys))
+    do: vm(root, name, "paused", Rigd.Fleet.Golden.comment(keys))
 
   defp vms(root), do: root |> Path.join("vms") |> File.ls!() |> Enum.sort()
 
@@ -146,6 +143,27 @@ defmodule Rigd.FleetExeTest do
   defp release(sock, host, result \\ "green") do
     :ok = :gen_tcp.send(sock, JSON.encode!(%{release: %{sprite: host, result: result}}) <> "\n")
     recv(sock)
+  end
+
+  test "a lease for the retired Sprite pool is refused with the reason; status names exe.dev only",
+       %{root: root, opts: opts} do
+    golden(root)
+    start(opts)
+    until(&ready?/0)
+
+    {:ok, sock} =
+      :gen_tcp.connect({:local, opts[:socket]}, 0, [:binary, packet: :line, active: false])
+
+    :ok = :gen_tcp.send(sock, JSON.encode!(%{lease: %{project: "proj", part: "p"}}) <> "\n")
+    assert %{"error" => why} = recv(sock)
+    assert why =~ "the Sprite pool is retired"
+    assert why =~ ~s("pool": "exe")
+    refute calls(root) =~ " cp "
+
+    :ok = :gen_tcp.send(sock, JSON.encode!(%{status: %{}}) <> "\n")
+    assert %{"exe" => %{"golden" => "rig-golden"}} = status = recv(sock)
+    assert Map.keys(status) == ["exe"]
+    :gen_tcp.close(sock)
   end
 
   test "a lease is a fresh copy of the golden at 4 vCPU, granted once it answers; a release removes it",

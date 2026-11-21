@@ -3,11 +3,11 @@ defmodule Gate.Check do
   `gate check [tier]`: the split gate on HEAD. Its parts (the project's
   `parts` command) run at once, one Sprite each from the pool, and the
   pool's last Sprite is the spare (`Gate.Engine` says when a part reruns,
-  there or on a Sprite whose own part has ended). On the shared pool
-  (`"pool": "fleet"`), each part runs on a Sprite leased from rigd's
-  `Fleet` as one frees, and reruns on the next; on exe.dev (`"pool":
-  "exe"`), on a fresh copy of the golden VM that `Fleet` leases. The gate
-  is green when every part is.
+  there or on a Sprite whose own part has ended). On exe.dev (`"pool":
+  "exe"`), each part runs on a fresh copy of the golden VM that rigd's
+  `Fleet` leases, and reruns on another. The shared Sprite pool (`"pool":
+  "fleet"`) was retired on 2026-11-21, and a commit that still names it is
+  refused. The gate is green when every part is.
 
   The contract the ship worker reads (rig's shipyard/README.md, "A
   project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
@@ -34,7 +34,15 @@ defmodule Gate.Check do
     parts = parts(config, tier)
     n = length(parts)
     pool = config.pool
-    fleet = pool in ["fleet", "exe"]
+    fleet = pool == "exe"
+
+    if pool == "fleet",
+      do:
+        raise(
+          Gate.Error,
+          "the shared Sprite pool is retired (2026-11-21; rig's EXE.md): this commit's " <>
+            ".gate.json says \"pool\": \"fleet\"; rebase onto origin/main, which gates on exe.dev"
+        )
 
     if n == 0, do: raise(Gate.Error, "the parts command named no part for #{tier}")
     if fleet, do: Gate.Lease.check!()
@@ -71,7 +79,7 @@ defmodule Gate.Check do
     say.(
       "#{short(sha)} (#{subject}): #{tier} as #{n} parts " <>
         if(fleet,
-          do: if(pool == "exe", do: "on exe.dev", else: "on the shared pool"),
+          do: "on exe.dev",
           else: "on #{Enum.join(used, " ")}, spare #{spare}"
         )
     )

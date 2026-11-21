@@ -4,7 +4,7 @@
 #
 #   rigd install     build the release, drain Fleet, install the LaunchAgent, (re)start it
 #   rigd status      what it sees: what runs, presence, keep-awake
-#   rigd fleet       the gate pools: each Sprite's state, the stamps; exe.dev's golden and leases
+#   rigd fleet       the gate's exe.dev VMs: the golden, its keys, the leases
 #   rigd heavy       heavy local jobs: who holds a slot, who waits, what was demoted
 #   rigd log         follow its log
 #   rigd restart     restart it under launchd
@@ -58,16 +58,10 @@ while not b.endswith(b"\n"):
         break
     b += c
 d = json.loads(b)
-print("stamps:  " + "  ".join(f"{p} {v}" for p, v in sorted(d["stamps"].items())))
-print(f"waiting: {d['waiting']}")
-for name, v in sorted(d["sprites"].items(), key=lambda kv: int(kv[0].rsplit("-", 1)[1])):
-    extra = [f"strikes {v['strikes']}"] if v["strikes"] else []
-    extra += [v["why"]] if v["why"] else []
-    extra += [f"served {' '.join(v['served'])}"] if v["served"] else []
-    print(f"{name:12} {v['status']:13} {'; '.join(extra)}".rstrip())
 e = d.get("exe")
+if not e:
+    print("exe.dev: no pool (gate/fleet.json has no \"exe\")")
 if e:
-    print()
     print(f"exe.dev: golden {e['golden'] or 'none'}" + (f", making {e['refresh']}" if e["refresh"] else "") + f"; waiting {e['waiting']}")
     current = "  ".join(f"{k} {v}" for k, v in sorted(e["keys"].items()))
     print(f"golden:  {current or 'keys unknown'}")
@@ -125,7 +119,7 @@ PY
   esac
 }
 
-# Stops Fleet leasing and waits (20 min at most) until no Sprite is leased,
+# Stops Fleet leasing and waits (20 min at most) until no VM is leased,
 # so the restart drops no gate's part; gates waiting for a lease connect
 # again to the new rigd (gate/lib/gate/lease.ex). A drain lapses a minute
 # after its last renewal, so an install stopped here leaves Fleet leasing.
@@ -152,13 +146,7 @@ said = None
 while True:
     try:
         d = ask({"drain": {}})
-        if "draining" in d:
-            leased = d["draining"]["leased"]
-        else:
-            # A rigd from before drain: wait until it holds no lease and none waits.
-            st = ask({"status": {}})
-            leased = [n for n, v in st["sprites"].items() if v["status"] == "leased"]
-            leased += ["(waiting)"] * st["waiting"]
+        leased = d["draining"]["leased"]
     except (OSError, ValueError) as e:
         print(f"rigd: Fleet does not answer ({e}); restarting without a drain")
         break

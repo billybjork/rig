@@ -3,27 +3,27 @@ defmodule Rigd.Fleet.Socket do
   The fleet's Unix socket (`~/Library/Caches/rigd/fleet.sock`), one JSON
   object per line each way:
 
-      → {"lease": {"project": "soco", "part": "static-1", "prefer": ["rig-gate-3"], "priority": "ship"}}
-      ← {"granted": "rig-gate-3"}                 (when one is idle; until then nothing)
-      → {"release": {"sprite": "rig-gate-3", "result": "green"}}
-      ← {"released": "rig-gate-3"}
-      → {"lease": {"project": "heaters", "part": "test-1", "pool": "exe", "warm": ["ae71…"]}}
-      ← {"granted": "rig-part-1120-2301-a1b2c3.exe.xyz"}   (`Rigd.Fleet.Exe`)
+      → {"lease": {"project": "heaters", "part": "test-1", "pool": "exe", "warm": ["ae71…"], "priority": "ship"}}
+      ← {"granted": "rig-part-1120-2301-a1b2c3.exe.xyz"}   (when a copy answers; until then nothing)
+      → {"release": {"sprite": "rig-part-1120-2301-a1b2c3.exe.xyz", "result": "green"}}
+      ← {"released": "rig-part-1120-2301-a1b2c3.exe.xyz"}
       → {"status": {}}
-      ← {"sprites": {...}, "stamps": {...}, "waiting": 0, "exe": {...}}
+      ← {"exe": {...}}
       → {"drain": {}}
-      ← {"draining": {"leased": ["rig-gate-3"], "waiting": 2}}
+      ← {"draining": {"leased": ["rig-part-…"], "waiting": 2}}
 
   Each connection is a process, and it holds what it leased: a gate that
-  dies closes its connection, and the Sprite it held ends its parts before
-  it is leased again. `result` is `green` or `red` (the part ran), `restarted`
-  (its Sprite restarted or went unreachable), `failed` (the Sprite failed
-  it otherwise) or `crashed` (a native crash). `priority` `ship` (a ship
-  worker's gate) waits ahead of every other lease; anything else is a
-  session's.
+  dies closes its connection, and the VM it held is removed (`Rigd.Fleet.Exe`).
+  `result` is `green`, `red`, `restarted`, `failed` or `crashed`; a VM is
+  removed whatever it is. `priority` `ship` (a ship worker's gate) waits
+  ahead of every other lease; anything else is a session's.
+
+  A lease without `"pool": "exe"` asked for the Sprite pool, retired on
+  2026-11-21 (rig's `EXE.md`), and is refused with the reason: it comes
+  from a branch cut before its project's `.gate.json` moved to exe.dev.
 
   `drain` stops granting for a minute, renewed by each `drain`
-  (`Rigd.Fleet.drain/0`); `bin/rigd install` sends it every few seconds
+  (`Rigd.Fleet.Exe.drain/0`); `bin/rigd install` sends it every few seconds
   until nothing is leased, then restarts rigd.
   """
 
@@ -96,20 +96,19 @@ defmodule Rigd.Fleet.Socket do
     nil
   end
 
-  defp handle(_sock, %{"lease" => %{"project" => project} = lease}, nil) do
-    priority = if lease["priority"] == "ship", do: :ship, else: :session
-    Rigd.Fleet.lease(self(), project, Map.get(lease, "prefer", []), priority)
+  defp handle(sock, %{"lease" => %{"project" => project}}, nil) do
+    reply(sock, %{
+      error:
+        "the Sprite pool is retired (2026-11-21): #{project} gates on exe.dev; " <>
+          "rebase onto origin/main, whose .gate.json says \"pool\": \"exe\""
+    })
+
     nil
   end
 
   defp handle(sock, %{"release" => %{"sprite" => sprite, "result" => result}}, sprite)
        when result in ~w(green red restarted failed crashed) do
-    release =
-      if Rigd.Fleet.Exe.host?(sprite),
-        do: &Rigd.Fleet.Exe.release/3,
-        else: &Rigd.Fleet.release/3
-
-    case release.(sprite, self(), result) do
+    case Rigd.Fleet.Exe.release(sprite, self(), result) do
       :ok -> reply(sock, %{released: sprite})
       {:error, why} -> reply(sock, %{error: "#{why}"})
     end
@@ -118,13 +117,6 @@ defmodule Rigd.Fleet.Socket do
   end
 
   defp handle(sock, %{"status" => _}, leased) do
-    st = Rigd.Fleet.status()
-
-    sprites =
-      Map.new(st.sprites, fn {name, s} ->
-        {name, Map.update(s, :status, nil, &to_string/1)}
-      end)
-
     exe =
       if Process.whereis(Rigd.Fleet.Exe) do
         e = Rigd.Fleet.Exe.status()
@@ -132,20 +124,15 @@ defmodule Rigd.Fleet.Socket do
         %{e | leases: leases}
       end
 
-    reply(sock, %{sprites: sprites, stamps: st.stamps, waiting: st.waiting, exe: exe})
+    reply(sock, %{exe: exe})
     leased
   end
 
   defp handle(sock, %{"drain" => _}, leased) do
-    d = Rigd.Fleet.drain()
-
     d =
-      if Process.whereis(Rigd.Fleet.Exe) do
-        e = Rigd.Fleet.Exe.drain()
-        %{leased: d.leased ++ e.leased, waiting: d.waiting + e.waiting}
-      else
-        d
-      end
+      if Process.whereis(Rigd.Fleet.Exe),
+        do: Rigd.Fleet.Exe.drain(),
+        else: %{leased: [], waiting: 0}
 
     reply(sock, %{draining: d})
     leased

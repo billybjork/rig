@@ -1,23 +1,27 @@
 defmodule Rigd.Fleet.Golden do
   @moduledoc """
-  What makes a Sprite golden, run through rig's `gate`: each project's
-  stamp on `origin/main` (`gate stamp origin/main` in its primary
-  checkout, after a fetch), and its setup on a Sprite (`gate golden
-  <sprite>`: tools, deps and warm caches, no gate part) from a detached
-  worktree of `origin/main` that is removed after. The primary checkout's
-  branch and tree are never touched. Each run's output goes to
-  `~/Library/Logs/rigd-fleet/`.
+  What makes an exe.dev golden VM (`Rigd.Fleet.Exe`), run through rig's
+  `gate`: each project's keys on `origin/main` (`gate keys origin/main` in
+  its primary checkout, after a fetch), and its setup on the VM (`gate
+  golden <vm>.exe.xyz`: tools, deps and warm caches, no gate part) from a
+  detached worktree of `origin/main` that is removed after. The primary
+  checkout's branch and tree are never touched. Each run's output goes to
+  `~/Library/Logs/rigd-fleet/`. A golden's comment names the keys it holds
+  (`comment/1`, `comment_keys/1`).
   """
 
-  @doc "The project's name and its stamp on `origin/main`."
-  def stamp(gate, dir) do
-    with :ok <- fetch(dir),
-         {:ok, json} <- git(dir, ["show", "origin/main:.gate.json"]),
-         {stamp, 0} <- cmd(gate, ["stamp", "origin/main"], dir, 120) do
-      {:ok, JSON.decode!(json)["name"], last_line(stamp)}
-    else
-      {:error, why} -> {:error, why}
-      {out, status} -> {:error, "gate stamp exited #{status}: #{last_line(out)}"}
+  @doc "A golden's comment: `golden <name> <hex> ...`, sorted."
+  def comment(keys),
+    do: "golden " <> Enum.map_join(Enum.sort(keys), " ", fn {k, v} -> "#{k} #{v}" end)
+
+  @doc "The keys a `golden ...` comment names, or nil for any other text."
+  def comment_keys(line) do
+    case Regex.run(~r/golden((?: [\w.-]+ [0-9a-f]{16})+)/, line) do
+      [_, pairs] ->
+        pairs |> String.split() |> Enum.chunk_every(2) |> Map.new(fn [k, v] -> {k, v} end)
+
+      nil ->
+        nil
     end
   end
 
@@ -44,13 +48,12 @@ defmodule Rigd.Fleet.Golden do
   end
 
   @doc """
-  The project's setup on `sprite`: `{:green, name, stamp}` (with `what`
-  `:keys`, `{:green, name, keys}`: an exe.dev golden), `{:red, why}`
-  (`gate golden` exited 1: not the Sprite's doing), `{:sprite_failed,
-  why}`, or `{:laptop, why}` when git failed here (no network, DNS): not
-  the Sprite's doing either.
+  The project's setup on the VM `sprite` (`<vm>.exe.xyz`): `{:green, name,
+  keys}`, `{:red, why}` (`gate golden` exited 1: not the VM's doing),
+  `{:sprite_failed, why}`, or `{:laptop, why}` when git failed here (no
+  network, DNS): not the VM's doing either.
   """
-  def run(gate, dir, sprite, what \\ :stamp) do
+  def run(gate, dir, sprite) do
     tmp =
       Path.join(System.tmp_dir!(), "rigd-golden-#{sprite}-#{System.unique_integer([:positive])}")
 
@@ -62,12 +65,11 @@ defmodule Rigd.Fleet.Golden do
       log = log_path(sprite, name)
       {out, status} = cmd(gate, ["golden", sprite], tmp, 4 * 3600)
       File.write!(log, out)
-      {stamp, _} = cmd(gate, if(what == :keys, do: ["keys", "HEAD"], else: ["stamp"]), tmp, 120)
+      {keys, _} = cmd(gate, ["keys", "HEAD"], tmp, 120)
       git(dir, ["worktree", "remove", "--force", tmp])
 
       case status do
-        0 when what == :keys -> {:green, name, parse_keys(stamp)}
-        0 -> {:green, name, last_line(stamp)}
+        0 -> {:green, name, parse_keys(keys)}
         1 -> {:red, "#{name}'s golden setup exited 1 (#{log})"}
         _ -> {:sprite_failed, "#{name}'s golden setup: exit #{status} (#{log})"}
       end
@@ -77,7 +79,7 @@ defmodule Rigd.Fleet.Golden do
   end
 
   # The worktrees an earlier run on `sprite` left when rigd was killed
-  # under it: none runs now, since a Sprite provisions one project at a time.
+  # under it: none runs now, since a golden is made one project at a time.
   @doc false
   def prune(dir, sprite) do
     with {:ok, list} <- git(dir, ["worktree", "list", "--porcelain"]) do
@@ -96,8 +98,8 @@ defmodule Rigd.Fleet.Golden do
     end
   end
 
-  # One git command at a time in a checkout: Sprites provisioning together
-  # would otherwise race on its refs and worktree list.
+  # One git command at a time in a checkout: runs together would otherwise
+  # race on its refs and worktree list.
   defp git(dir, args) do
     run = fn -> System.cmd("git", ["-C", dir | args], stderr_to_stdout: true) end
 
@@ -140,5 +142,13 @@ defmodule Rigd.Fleet.Golden do
     Path.join(dir, "#{sprite}-#{name}-#{stamp}.log")
   end
 
-  defp last_line(text), do: Rigd.Fleet.CLI.last_line(text)
+  @doc "The last non-blank line of a command's output, for a one-line reason."
+  def last_line(text) do
+    text
+    |> String.split(["\n", "\r"], trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> List.last()
+    |> Kernel.||("no output")
+  end
 end

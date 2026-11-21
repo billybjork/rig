@@ -7,9 +7,15 @@ taught; approved by Billy the same day with a pool of 10 Sprites
 (`rig-gate-1` to `-10`) and each project's own pool destroyed once it gates
 green on the shared one.
 
-The Sprite pool below is being replaced by exe.dev (rig's `EXE.md`); its
-`Fleet` side is "On exe.dev" at the end. A project moves by its
-`.gate.json`, and the Sprite pool stays until the last project leaves it.
+**Retired 2026-11-21.** Both projects gate on exe.dev (rig's `EXE.md`;
+heaters #871, soco #895), the Sprites `rig-gate-1` to `-10` are destroyed,
+and rigd's Sprite side of `Fleet` (`Rigd.Fleet`, `Fleet.Sprite`,
+`Fleet.CLI`) is removed; a `"pool": "fleet"` gate is refused with the
+reason. What is live is "On exe.dev" at the end. The rest of this file
+is the Sprite pool's history, kept for what it taught: why a golden only
+sets up, why reruns are host-agnostic, why ships lease first. The
+Sprite backend itself (`lib/gate/sprite.ex`) still serves `gate run` on
+the dev Sprites until the workbench (`EXE.md` step 4).
 
 ## What exists
 

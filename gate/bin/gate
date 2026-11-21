@@ -15,7 +15,7 @@
 # A gate on a project's own pool and every pool command but status hold the
 # pool's lock, and a run its dev Sprite's (the protocol of libexec/lock, on
 # files under the project's `locks`), so two never share a Sprite. A gate on
-# the shared pool holds none: each part leases its own Sprite.
+# exe.dev holds none: each part leases its own VM.
 set -euo pipefail
 gate=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -42,10 +42,10 @@ hold() {
 }
 case "${1:-} ${2:-}" in
   "pool status" | "pool " | "times "* | "stamp "* | "keys "*) ;;
-  # On the shared pool each part leases its own Sprite, and a ship's gate
-  # leases ahead of a session's (rigd's Fleet), so a fleet gate holds no
-  # lock: one held a ship worker for 19 minutes (2026-11-16). Nor does an
-  # exe.dev gate, whose parts each lease a fresh VM from Fleet.
+  # On exe.dev each part leases its own VM, and a ship's gate leases ahead
+  # of a session's (rigd's Fleet), so it holds no lock: a lock held a ship
+  # worker for 19 minutes (2026-11-16). A "fleet" gate (the retired shared
+  # pool) takes none either; `gate check` refuses it.
   "check "*) case "$(jq -r '.pool // empty | strings' "$config")" in fleet | exe) ;; *) hold pool.lock GATE_POOL_HELD "$@" ;; esac ;;
   "pool "*) hold pool.lock GATE_POOL_HELD "$@" ;;
   "run "*) hold "${GATE_DEV_SPRITE:-$(jq -er '.dev[0]' "$config")}.lock" GATE_DEV_HELD "$@" ;;

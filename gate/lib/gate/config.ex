@@ -6,10 +6,10 @@ defmodule Gate.Config do
 
     * `name`: the project; its tree on a Sprite is `~/<name>`, its stamp
       `~/<name>-stamp`, its environment `~/<name>-env.sh`.
-    * `pool`: the gate's Sprites; the last is the spare. Or `"fleet"`: the
-      shared pool, whose Sprites are leased from rigd's `Fleet`. Or `"exe"`:
-      exe.dev, each part on a fresh copy of the golden VM that `Fleet`
-      leases (rig's EXE.md, step 3). `dev`: the Sprites
+    * `pool`: `"exe"`: exe.dev, each part on a fresh copy of the golden VM
+      that rigd's `Fleet` leases (rig's EXE.md, step 3). Or the gate's own
+      Sprites; the last is the spare. (`"fleet"`, the shared Sprite pool,
+      was retired on 2026-11-21; `gate check` refuses it.) `dev`: the Sprites
       `gate run` uses, never in the pool.
     * `logs`: where each part's log and `check-remote.tsv` go; `locks`:
       where the pool's and each dev Sprite's lock files are.
@@ -20,7 +20,7 @@ defmodule Gate.Config do
       Sprite from the checkout as `bash <script> <stamp> <args...>`.
     * `image`: instead of `stamp` and `provision`, the project's pin files
       (its `.tool-versions` first) for rig's one gate image
-      (`image/provision.sh`), which every project on the shared pool uses;
+      (`image/provision.sh`), which every project uses;
       the stamp is then the hash of those files and the image script.
     * `setup`: the script that readies a checked-out tree before each part
       (databases, deps, Node trees).

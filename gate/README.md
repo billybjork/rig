@@ -136,21 +136,22 @@ Copying costs the first part after each of those: about 4 min for Swift (3.6
 GB) after a host move, and a minute or so for a project's own paths after a
 restore.
 
-## The shared pool
+## Leased from `Fleet`
 
-rigd's `Fleet` (`rigd/lib/rigd/fleet.ex`, the plan in `FLEET.md`) keeps
-the Sprites `fleet.json` names golden: each project's setup and warm caches,
-`gate golden <sprite>` from a detached worktree of its `origin/main`,
-then a checkpoint whose comment names every project's stamp (`gate stamp
-origin/main`). A project whose `.gate.json` says `"pool": "fleet"` gates
-on it: each part, its first run and its rerun alike, waits for a Sprite
-leased on `~/Library/Caches/rigd/fleet.sock` (`lib/gate/lease.ex`) and
-gives it back as it ends (`green`, `red`, `failed`, `crashed`), so `gate
-check` needs no spare, only a free Sprite per part as they come; with rigd
-down it exits 2. A fleet gate holds no pool lock, so a session's own `gate
-check` and a ship's run side by side, and a ship's parts (`SHIPYARD_STATUS_ID`
-set) lease ahead of every session's (2026-11-16: a session's gate held soco's
-worker for 19 minutes, and 258 waits in the workers' logs). `gate pool` is then `Fleet`'s, not the project's.
+A project whose `.gate.json` says `"pool": "exe"` gates on VMs that rigd's
+`Fleet` leases (`rigd/lib/rigd/fleet/exe.ex`, "On exe.dev" above and in
+`FLEET.md`): each part, its first run and its rerun alike, waits for one
+on `~/Library/Caches/rigd/fleet.sock` (`lib/gate/lease.ex`) and gives it
+back as it ends (`green`, `red`, `failed`, `crashed`), so `gate check`
+needs no spare; with rigd down it exits 2. Such a gate holds no pool lock,
+so a session's own `gate check` and a ship's run side by side, and a
+ship's parts (`SHIPYARD_STATUS_ID` set) lease ahead of every session's
+(2026-11-16: a session's gate held soco's worker for 19 minutes, and 258
+waits in the workers' logs). `gate pool` is then not the project's.
+
+The shared Sprite pool (`"pool": "fleet"`, `rig-gate-1` to `-10`) that
+did this before was retired on 2026-11-21; `gate check` refuses a commit
+whose `.gate.json` still names it, and says to rebase.
 
 ## The contract
 
