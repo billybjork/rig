@@ -232,7 +232,8 @@ defmodule Gate.FakeFleet do
   @moduledoc """
   rigd's `Fleet` as a gate sees it: a Unix socket that leases `sprites`,
   idle ones oldest-released first, one per waiting connection, and takes
-  them back. `released/1` lists `{sprite, result}` in order; a connection
+  them back. `released/1` lists `{sprite, result}` in order, `leases/1`
+  each lease request as sent; a connection
   that closes holding a Sprite gives it back as `"dropped"`.
   """
 
@@ -252,6 +253,7 @@ defmodule Gate.FakeFleet do
 
   def released(pid), do: GenServer.call(pid, :released)
   def waiting(pid), do: GenServer.call(pid, :waiting)
+  def leases(pid), do: GenServer.call(pid, :leases)
   def path(pid), do: GenServer.call(pid, :path)
   def stop(pid), do: GenServer.stop(pid)
 
@@ -262,7 +264,7 @@ defmodule Gate.FakeFleet do
 
     me = self()
     spawn_link(fn -> accept(listen, me) end)
-    {:ok, %{idle: sprites, waiting: [], held: %{}, released: [], path: path}}
+    {:ok, %{idle: sprites, waiting: [], held: %{}, released: [], leases: [], path: path}}
   end
 
   @impl true
@@ -283,6 +285,7 @@ defmodule Gate.FakeFleet do
   @impl true
   def handle_call(:released, _from, st), do: {:reply, Enum.reverse(st.released), st}
   def handle_call(:waiting, _from, st), do: {:reply, length(st.waiting), st}
+  def handle_call(:leases, _from, st), do: {:reply, Enum.reverse(st.leases), st}
   def handle_call(:path, _from, st), do: {:reply, st.path, st}
 
   @impl true
@@ -294,8 +297,8 @@ defmodule Gate.FakeFleet do
   def handle_info({:tcp, sock, line}, st) do
     st =
       case JSON.decode!(line) do
-        %{"lease" => _} ->
-          grant(%{st | waiting: st.waiting ++ [sock]})
+        %{"lease" => lease} ->
+          grant(%{st | waiting: st.waiting ++ [sock], leases: [lease | st.leases]})
 
         %{"release" => %{"sprite" => s, "result" => r}} ->
           :gen_tcp.send(sock, JSON.encode!(%{released: s}) <> "\n")

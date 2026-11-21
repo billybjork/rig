@@ -18,7 +18,7 @@ defmodule Gate.Pool do
 
   alias Gate.{Check, Engine, Sprite, Stamp}
 
-  def main(%{pool: "fleet"}, _args),
+  def main(%{pool: pool}, _args) when pool in ["fleet", "exe"],
     do:
       raise(
         Gate.Error,

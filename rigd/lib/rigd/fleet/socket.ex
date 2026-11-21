@@ -7,8 +7,10 @@ defmodule Rigd.Fleet.Socket do
       ← {"granted": "rig-gate-3"}                 (when one is idle; until then nothing)
       → {"release": {"sprite": "rig-gate-3", "result": "green"}}
       ← {"released": "rig-gate-3"}
+      → {"lease": {"project": "heaters", "part": "test-1", "pool": "exe", "warm": ["ae71…"]}}
+      ← {"granted": "rig-part-1120-2301-a1b2c3.exe.xyz"}   (`Rigd.Fleet.Exe`)
       → {"status": {}}
-      ← {"sprites": {...}, "stamps": {...}, "waiting": 0}
+      ← {"sprites": {...}, "stamps": {...}, "waiting": 0, "exe": {...}}
       → {"drain": {}}
       ← {"draining": {"leased": ["rig-gate-3"], "waiting": 2}}
 
@@ -84,6 +86,16 @@ defmodule Rigd.Fleet.Socket do
     end
   end
 
+  defp handle(sock, %{"lease" => %{"project" => project, "pool" => "exe"} = lease}, nil) do
+    priority = if lease["priority"] == "ship", do: :ship, else: :session
+
+    if Process.whereis(Rigd.Fleet.Exe),
+      do: Rigd.Fleet.Exe.lease(self(), project, Map.get(lease, "warm", []), priority),
+      else: reply(sock, %{error: "rigd's Fleet has no exe.dev pool (gate/fleet.json \"exe\")"})
+
+    nil
+  end
+
   defp handle(_sock, %{"lease" => %{"project" => project} = lease}, nil) do
     priority = if lease["priority"] == "ship", do: :ship, else: :session
     Rigd.Fleet.lease(self(), project, Map.get(lease, "prefer", []), priority)
@@ -92,7 +104,12 @@ defmodule Rigd.Fleet.Socket do
 
   defp handle(sock, %{"release" => %{"sprite" => sprite, "result" => result}}, sprite)
        when result in ~w(green red restarted failed crashed) do
-    case Rigd.Fleet.release(sprite, self(), result) do
+    release =
+      if Rigd.Fleet.Exe.host?(sprite),
+        do: &Rigd.Fleet.Exe.release/3,
+        else: &Rigd.Fleet.release/3
+
+    case release.(sprite, self(), result) do
       :ok -> reply(sock, %{released: sprite})
       {:error, why} -> reply(sock, %{error: "#{why}"})
     end
@@ -108,12 +125,29 @@ defmodule Rigd.Fleet.Socket do
         {name, Map.update(s, :status, nil, &to_string/1)}
       end)
 
-    reply(sock, %{sprites: sprites, stamps: st.stamps, waiting: st.waiting})
+    exe =
+      if Process.whereis(Rigd.Fleet.Exe) do
+        e = Rigd.Fleet.Exe.status()
+        leases = Map.new(e.leases, fn {n, l} -> {n, Map.update!(l, :status, &to_string/1)} end)
+        %{e | leases: leases}
+      end
+
+    reply(sock, %{sprites: sprites, stamps: st.stamps, waiting: st.waiting, exe: exe})
     leased
   end
 
   defp handle(sock, %{"drain" => _}, leased) do
-    reply(sock, %{draining: Rigd.Fleet.drain()})
+    d = Rigd.Fleet.drain()
+
+    d =
+      if Process.whereis(Rigd.Fleet.Exe) do
+        e = Rigd.Fleet.Exe.drain()
+        %{leased: d.leased ++ e.leased, waiting: d.waiting + e.waiting}
+      else
+        d
+      end
+
+    reply(sock, %{draining: d})
     leased
   end
 

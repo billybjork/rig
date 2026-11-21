@@ -215,7 +215,8 @@ lease, about $115 a month against the Sprites' $95); step 1 done
 (`gate/exe/base.sh`, `rig-golden` provisioned with both histories, paused);
 step 2 done (`gate/lib/gate/exe.ex`: a host named `<vm>.exe.xyz` runs its
 parts over `ssh`; `rig-golden` set up and warm for both projects through
-`gate golden`). Next, step 3: rigd's `Fleet` leases a fresh copy of
-`rig-golden` per part, heaters first.
+`gate golden`); step 3 built (`Rigd.Fleet.Exe`: a fresh copy of the
+golden per part, `"pool": "exe"`; the golden refreshed on a key change),
+a heaters gate green on it in 534 s; heaters moves first, then soco.
 
 Then agents on Sprites (step 5).

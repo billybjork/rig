@@ -560,6 +560,47 @@ defmodule Gate.CheckTest do
     assert_raise Gate.Error, ~r/local paths not in keep: _build/, fn -> Fake.config(env.top) end
   end
 
+  describe "on exe.dev" do
+    @describetag gate: %{
+                   "pool" => "exe",
+                   "warm" => [
+                     %{
+                       "name" => "plt",
+                       "parts" => ["static"],
+                       "key" => [".gate.json"],
+                       "command" => "true"
+                     }
+                   ]
+                 }
+
+    setup do
+      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
+    end
+
+    test "each part asks Fleet for an exe.dev VM, naming the warm keys it needs", env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
+
+      {status, _out, err} =
+        check(env, [{"static", "bash cmd.sh green"}, {"test-1", "bash cmd.sh green"}])
+
+      assert status == 0, err
+      assert err =~ "as 2 parts on exe.dev"
+      leases = Enum.sort_by(Gate.FakeFleet.leases(fleet), & &1["part"])
+      assert [%{"pool" => "exe", "warm" => [key]}, %{"pool" => "exe", "warm" => []}] = leases
+      assert key =~ ~r/^[0-9a-f]{16}$/
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    test "gate keys names the stamp and each warm cache's key at a commit", env do
+      config = Fake.config(env.top)
+      sha = Gate.Check.git!(config, ["rev-parse", "HEAD"])
+      stamp = Gate.Stamp.stamp(config, sha)
+      [{name, ^stamp}, {warm, key}] = Gate.Stamp.keys(config, sha)
+      assert warm == name <> "-plt"
+      assert key == Gate.Stamp.warm_key(config, sha, stamp, hd(config.warm))
+    end
+  end
+
   describe "on the shared pool" do
     @describetag gate: %{"pool" => "fleet"}
 

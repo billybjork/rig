@@ -202,6 +202,20 @@ once (on 8 vCPU / 16 GB, which the cold PLT needs) and swaps it in.
 heaters moves first, then soco, each by its `.gate.json`; the Sprite pool is
 destroyed after a few green ships on the new one (Billy's call).
 
+Built 2026-11-20 (`rigd/lib/rigd/fleet/exe.ex`, `gate/FLEET.md` "On
+exe.dev"): `Rigd.Fleet.Exe` beside the Sprite pool, on the same socket,
+when `gate/fleet.json` has `exe`. A `.gate.json` with `"pool": "exe"`
+leases `rig-part-<time>-<hex>` copies, granted once SSH answers, removed
+on release or when the holder goes; 8 / 16 when a part's warm key is not
+the golden's. The golden is the newest paused `rig-golden*` VM with a
+`golden <name> <hex> ...` comment (each project's stamp and warm keys,
+`gate keys origin/main`); a change makes a new one at 8 / 16 and swaps it
+in, and a sweep removes what nothing holds. The first refresh, from the
+seed `rig-golden`, took 7 min (soco's PLT rebuilt in 356 s) and made
+`rig-golden-1120-235625-94ffec`; a heaters gate through a trial `Fleet`
+on it was green in 534 s (static 172, test-1 524, test-2 423, test-3
+398), its four VMs removed after.
+
 ### 4. The workbench
 
 One command for agents (`gate run`, pointed at exe.dev, or `rig run`):

@@ -22,12 +22,35 @@ defmodule Rigd.Fleet.Golden do
   end
 
   @doc """
-  The project's setup on `sprite`: `{:green, name, stamp}`, `{:red, why}`
+  What a golden VM made from the project's `origin/main` holds (`gate keys
+  origin/main`): `{:ok, %{"<name>" => stamp, "<name>-<warm>" => key}}`.
+  """
+  def keys(gate, dir) do
+    with :ok <- fetch(dir),
+         {out, 0} <- cmd(gate, ["keys", "origin/main"], dir, 120) do
+      {:ok, parse_keys(out)}
+    else
+      {:error, why} -> {:error, why}
+      {out, status} -> {:error, "gate keys exited #{status}: #{last_line(out)}"}
+    end
+  end
+
+  @doc "The `<name> <16 hex>` lines of `gate keys`' output (`bin/gate` compiles to stderr first)."
+  def parse_keys(out) do
+    for line <- String.split(out, "\n"),
+        [_, k, v] <- [Regex.run(~r/^([\w.-]+) ([0-9a-f]{16})$/, String.trim(line))],
+        into: %{},
+        do: {k, v}
+  end
+
+  @doc """
+  The project's setup on `sprite`: `{:green, name, stamp}` (with `what`
+  `:keys`, `{:green, name, keys}`: an exe.dev golden), `{:red, why}`
   (`gate golden` exited 1: not the Sprite's doing), `{:sprite_failed,
   why}`, or `{:laptop, why}` when git failed here (no network, DNS): not
   the Sprite's doing either.
   """
-  def run(gate, dir, sprite) do
+  def run(gate, dir, sprite, what \\ :stamp) do
     tmp =
       Path.join(System.tmp_dir!(), "rigd-golden-#{sprite}-#{System.unique_integer([:positive])}")
 
@@ -39,10 +62,11 @@ defmodule Rigd.Fleet.Golden do
       log = log_path(sprite, name)
       {out, status} = cmd(gate, ["golden", sprite], tmp, 4 * 3600)
       File.write!(log, out)
-      {stamp, _} = cmd(gate, ["stamp"], tmp, 120)
+      {stamp, _} = cmd(gate, if(what == :keys, do: ["keys", "HEAD"], else: ["stamp"]), tmp, 120)
       git(dir, ["worktree", "remove", "--force", tmp])
 
       case status do
+        0 when what == :keys -> {:green, name, parse_keys(stamp)}
         0 -> {:green, name, last_line(stamp)}
         1 -> {:red, "#{name}'s golden setup exited 1 (#{log})"}
         _ -> {:sprite_failed, "#{name}'s golden setup: exit #{status} (#{log})"}

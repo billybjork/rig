@@ -3,5 +3,6 @@
     "rig-gate-1", "rig-gate-2", "rig-gate-3", "rig-gate-4", "rig-gate-5",
     "rig-gate-6", "rig-gate-7", "rig-gate-8", "rig-gate-9", "rig-gate-10"
   ],
-  "projects": ["~/dev/soco", "~/dev/heaters"]
+  "projects": ["~/dev/soco", "~/dev/heaters"],
+  "exe": {"golden": "rig-golden", "cpu": 4, "memory": "8GB", "big": {"cpu": 8, "memory": "16GB"}, "max": 15}
 }

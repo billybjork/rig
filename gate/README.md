@@ -108,8 +108,12 @@ What differs:
 - No local disk (the one disk is local NVMe), and the job's 4 GiB of swap
   is a plain file (`/var/tmp/gate-swap`), not a loop device.
 
-`gate golden rig-golden.exe.xyz`, run in a project's checkout, readies the
-golden VM as it does a Sprite.
+`gate golden <vm>.exe.xyz`, run in a project's checkout, readies a golden
+VM as it does a Sprite. A project whose `.gate.json` says `"pool": "exe"`
+gates on fresh copies of the golden that rigd's `Fleet` leases, one per
+part, removed as each part ends (`FLEET.md`, "On exe.dev"); `gate keys
+<rev>` prints what a golden made at `<rev>` holds, which `Fleet` compares
+with the golden's comment.
 
 ## The local disk
 

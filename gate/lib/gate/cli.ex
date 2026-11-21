@@ -28,12 +28,20 @@ defmodule Gate.CLI do
             sha = Gate.Check.git!(config, ["rev-parse", "#{rev}^{commit}"])
             IO.puts(Gate.Stamp.stamp(Gate.Config.load(top, sha), sha)) && 0
 
+          ["keys", rev] ->
+            sha = Gate.Check.git!(config, ["rev-parse", "#{rev}^{commit}"])
+
+            for {name, key} <- Gate.Stamp.keys(Gate.Config.load(top, sha), sha),
+                do: IO.puts("#{name} #{key}")
+
+            0
+
           ["golden", sprite] ->
             Gate.Golden.main(config, sprite)
 
           _ ->
             raise Gate.Error,
-                  "usage: gate check [tier] | run <cmd...> | pool ... | golden <host> | times | stamp [rev]"
+                  "usage: gate check [tier] | run <cmd...> | pool ... | golden <host> | times | stamp [rev] | keys <rev>"
         end
       rescue
         e in Gate.Error ->

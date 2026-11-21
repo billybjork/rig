@@ -16,6 +16,18 @@ defmodule Gate.Stamp do
 
   def warm_key(config, sha, stamp, warm), do: hash(config, sha, warm["key"], stamp)
 
+  @doc """
+  What a golden VM made at `sha` holds (`gate keys`, which rigd's `Fleet`
+  reads for exe.dev): `[{"<name>", stamp}, {"<name>-<warm>", key}, ...]`.
+  """
+  def keys(config, sha) do
+    stamp = stamp(config, sha)
+
+    [{config.name, stamp}] ++
+      for warm <- config.warm,
+          do: {"#{config.name}-#{warm["name"]}", warm_key(config, sha, stamp, warm)}
+  end
+
   defp hash(config, sha, files, extra) do
     contents =
       for file <- files do

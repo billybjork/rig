@@ -4,7 +4,9 @@ defmodule Rigd.Fleet.Supervisor do
   Sprite, `Rigd.Fleet`, and the socket with a process per connection.
   `opts`: `sprites`, `projects` (their primary checkouts), `gate` (rig's
   `gate/bin/gate`), `golden` (`Rigd.Fleet.Golden`), `socket`, `cli` (the
-  `sprite` CLI) and `deadline` (rig's `gate/libexec/deadline`).
+  `sprite` CLI), `deadline` (rig's `gate/libexec/deadline`), and for
+  exe.dev (`Rigd.Fleet.Exe`, when `exe` is set) `exe` (`fleet.json`'s
+  `exe` object) and `ssh`.
   """
 
   use Supervisor
@@ -23,20 +25,26 @@ defmodule Rigd.Fleet.Supervisor do
       deadline: Path.join(gate, "libexec/deadline"),
       golden: Rigd.Fleet.Golden,
       socket: Path.expand("~/Library/Caches/rigd/fleet.sock"),
-      cli: Path.expand(json["cli"] || "~/.local/bin/sprite")
+      cli: Path.expand(json["cli"] || "~/.local/bin/sprite"),
+      exe: json["exe"],
+      ssh: json["ssh"] || "/usr/bin/ssh"
     ]
   end
 
   @impl true
   def init(opts) do
-    children = [
-      {Rigd.Fleet.CLI, opts},
-      {Registry, keys: :unique, name: Rigd.Fleet.Registry},
-      {DynamicSupervisor, name: Rigd.Fleet.Sprites, strategy: :one_for_one},
-      {Rigd.Fleet, opts},
-      {Task.Supervisor, name: Rigd.Fleet.Conns},
-      {Rigd.Fleet.Socket, opts}
-    ]
+    children =
+      [
+        {Rigd.Fleet.CLI, opts},
+        {Registry, keys: :unique, name: Rigd.Fleet.Registry},
+        {DynamicSupervisor, name: Rigd.Fleet.Sprites, strategy: :one_for_one},
+        {Rigd.Fleet, opts}
+      ] ++
+        if(opts[:exe], do: [{Rigd.Fleet.Exe, opts}], else: []) ++
+        [
+          {Task.Supervisor, name: Rigd.Fleet.Conns},
+          {Rigd.Fleet.Socket, opts}
+        ]
 
     Supervisor.init(children, strategy: :rest_for_one)
   end

@@ -4,7 +4,7 @@
 #
 #   rigd install     build the release, drain Fleet, install the LaunchAgent, (re)start it
 #   rigd status      what it sees: what runs, presence, keep-awake
-#   rigd fleet       the shared gate pool: each Sprite's state, the stamps
+#   rigd fleet       the gate pools: each Sprite's state, the stamps; exe.dev's golden and leases
 #   rigd heavy       heavy local jobs: who holds a slot, who waits, what was demoted
 #   rigd log         follow its log
 #   rigd restart     restart it under launchd
@@ -47,7 +47,7 @@ import json, os, socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(30)
 try:
-    s.connect(os.path.expanduser("~/Library/Caches/rigd/fleet.sock"))
+    s.connect(os.environ.get("GATE_FLEET_SOCKET") or os.path.expanduser("~/Library/Caches/rigd/fleet.sock"))
 except OSError as e:
     sys.exit(f"rigd: Fleet does not answer ({e})")
 s.sendall(b'{"status": {}}\n')
@@ -65,6 +65,18 @@ for name, v in sorted(d["sprites"].items(), key=lambda kv: int(kv[0].rsplit("-",
     extra += [v["why"]] if v["why"] else []
     extra += [f"served {' '.join(v['served'])}"] if v["served"] else []
     print(f"{name:12} {v['status']:13} {'; '.join(extra)}".rstrip())
+e = d.get("exe")
+if e:
+    print()
+    print(f"exe.dev: golden {e['golden'] or 'none'}" + (f", making {e['refresh']}" if e["refresh"] else "") + f"; waiting {e['waiting']}")
+    current = "  ".join(f"{k} {v}" for k, v in sorted(e["keys"].items()))
+    print(f"golden:  {current or 'keys unknown'}")
+    if e["target"] and e["target"] != e["keys"]:
+        print("main:    " + "  ".join(f"{k} {v}" for k, v in sorted(e["target"].items())))
+    if e["why"]:
+        print(f"last:    {e['why']}")
+    for name, v in sorted(e["leases"].items()):
+        print(f"{name:30} {v['status']:9} {v['project']}{' (8 vCPU)' if v['big'] else ''}")
 PY
       ;;
     heavy)

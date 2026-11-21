@@ -32,11 +32,27 @@ defmodule Gate.Lease do
   @doc """
   Asks for a Sprite for `project`'s part `part`; returns the lease's pid.
   A ship worker's gate (`SHIPYARD_STATUS_ID` set) asks as `ship`, ahead of
-  every session's own gate.
+  every session's own gate. `opts`: `pool` (`"exe"` asks for an exe.dev
+  VM, granted as `<vm>.exe.xyz`) and `warm`, the keys of the warm caches
+  the part needs: on exe.dev a key the golden VM lacks gets a bigger VM,
+  since soco's cold dialyzer PLT needs 16 GB (EXE.md, check 0d).
   """
-  def request(project, part, key) do
+  def request(project, part, key, opts \\ []) do
     owner = self()
-    spawn_link(fn -> hold(owner, project, part, key) end)
+    msg = message(project, part, opts)
+    spawn_link(fn -> hold(owner, msg, key) end)
+  end
+
+  @doc false
+  def message(project, part, opts) do
+    lease = %{project: project, part: part, priority: priority()}
+
+    lease =
+      if opts[:pool] == "exe",
+        do: Map.merge(lease, %{pool: "exe", warm: opts[:warm] || []}),
+        else: lease
+
+    %{lease: lease}
   end
 
   @doc "Gives the Sprite back with the part's `result`: green, red, restarted, failed or crashed."
@@ -62,9 +78,9 @@ defmodule Gate.Lease do
     end
   end
 
-  defp hold(owner, project, part, key, lost \\ nil) do
+  defp hold(owner, msg, key, lost \\ nil) do
     with {:ok, sock} <- connect(),
-         :ok <- send_line(sock, %{lease: %{project: project, part: part, priority: priority()}}),
+         :ok <- send_line(sock, msg),
          {:ok, line} <- :gen_tcp.recv(sock, 0),
          %{"granted" => sprite} <- JSON.decode!(line) do
       send(owner, {:fleet_granted, key, sprite, self()})
@@ -82,7 +98,7 @@ defmodule Gate.Lease do
 
         if now - lost < reconnect() do
           Process.sleep(1000)
-          hold(owner, project, part, key, lost)
+          hold(owner, msg, key, lost)
         else
           send(owner, {:fleet_lost, key, inspect(why)})
         end

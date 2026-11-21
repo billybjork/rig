@@ -120,7 +120,11 @@ defmodule Gate.Engine do
 
   # A part waits for a Sprite from `Fleet`.
   defp lease(ctx, state, base, why) do
-    pid = Gate.Lease.request(ctx.config.name, base.job.name, base.i)
+    pid =
+      Gate.Lease.request(ctx.config.name, base.job.name, base.i,
+        pool: ctx.config.pool,
+        warm: Enum.map(base.job.warm, & &1.key)
+      )
 
     ctx.report.(
       base,

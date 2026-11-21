@@ -5,8 +5,9 @@ defmodule Gate.Check do
   pool's last Sprite is the spare (`Gate.Engine` says when a part reruns,
   there or on a Sprite whose own part has ended). On the shared pool
   (`"pool": "fleet"`), each part runs on a Sprite leased from rigd's
-  `Fleet` as one frees, and reruns on the next. The gate is green when
-  every part is.
+  `Fleet` as one frees, and reruns on the next; on exe.dev (`"pool":
+  "exe"`), on a fresh copy of the golden VM that `Fleet` leases. The gate
+  is green when every part is.
 
   The contract the ship worker reads (rig's shipyard/README.md, "A
   project"): exit 0 green, 1 red with a digest of 30 lines or fewer on
@@ -33,7 +34,7 @@ defmodule Gate.Check do
     parts = parts(config, tier)
     n = length(parts)
     pool = config.pool
-    fleet = pool == "fleet"
+    fleet = pool in ["fleet", "exe"]
 
     if n == 0, do: raise(Gate.Error, "the parts command named no part for #{tier}")
     if fleet, do: Gate.Lease.check!()
@@ -70,7 +71,7 @@ defmodule Gate.Check do
     say.(
       "#{short(sha)} (#{subject}): #{tier} as #{n} parts " <>
         if(fleet,
-          do: "on the shared pool",
+          do: if(pool == "exe", do: "on exe.dev", else: "on the shared pool"),
           else: "on #{Enum.join(used, " ")}, spare #{spare}"
         )
     )

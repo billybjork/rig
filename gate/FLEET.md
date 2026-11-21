@@ -7,6 +7,10 @@ taught; approved by Billy the same day with a pool of 10 Sprites
 (`rig-gate-1` to `-10`) and each project's own pool destroyed once it gates
 green on the shared one.
 
+The Sprite pool below is being replaced by exe.dev (rig's `EXE.md`); its
+`Fleet` side is "On exe.dev" at the end. A project moves by its
+`.gate.json`, and the Sprite pool stays until the last project leaves it.
+
 ## What exists
 
 - **The image.** One provision script for every project: the apt union,
@@ -167,3 +171,40 @@ Each step lands on its own, live before the next.
 5. **soco moves** (`"pool": "fleet"`), then **heaters**; each project's own
    Sprites are destroyed after three green ships in a row on the shared
    pool (soco-gate-1 to -6, heaters-gate-1 to -5; the dev Sprites stay).
+
+## On exe.dev (EXE.md step 3)
+
+`Rigd.Fleet.Exe`, beside the Sprite pool under the same supervisor and
+socket, when `gate/fleet.json` has `exe`. A project's `.gate.json` names
+it as `"pool": "exe"`: each part's lease (`Gate.Lease`) says `"pool":
+"exe"` and the keys of the warm caches it needs, and is granted
+`<vm>.exe.xyz`, which `Gate.Host` sends to the exe backend.
+
+- **No standing pool.** A lease is a fresh copy of the golden (`ssh
+  exe.dev cp <golden> rig-part-<time>-<hex> --standalone --cpu=4
+  --memory=8GB`, about a second, its caches warm), granted once its SSH
+  answers. A release removes it (`rm`) whatever the result, and so does a
+  holder that goes without one. So a strike is just the next lease's
+  fresh copy, and a rerun lands on a new VM. At most `exe.max` (15) at
+  once; the rest queue, ships first.
+- **The big size.** A part needing a warm cache whose key the golden
+  lacks gets 8 vCPU / 16 GB (`exe.big`): soco's cold dialyzer PLT was
+  OOM-killed at 8 GB (EXE.md, check 0d).
+- **The golden** is the newest paused VM named `rig-golden*` whose comment
+  reads `golden heaters <stamp> heaters-plt <key> soco ...`: each
+  project's stamp and warm keys on `origin/main` when it was made (`gate
+  keys origin/main`). `cp` copies the comment, so only a paused
+  golden-named VM counts. Every 10 minutes `Fleet` reads the keys again;
+  when they differ it copies the golden to `rig-golden-<time>-<hex>` at
+  the big size, comments it `refreshing`, runs each project's `gate
+  golden` there, pauses it and writes its golden comment: the swap. The
+  old golden goes once no copy of it is under way. Leases go on from the
+  old one meanwhile. A red `main` keeps the old golden and tries again in
+  30 minutes. With no golden comment anywhere, the VM named `rig-golden`
+  is the seed (keys unknown: refreshed first, every warm part big).
+- **The sweep**, every 10 minutes and at start: part VMs nothing leases
+  and golden-named VMs that are neither the golden nor the one being made
+  (a refresh a restart cut off) are removed.
+- `drain` counts exe leases and a refresh under way, so `bin/rigd
+  install` waits for them as it does for Sprites. `bin/rigd fleet` shows
+  the golden, `main`'s keys when they differ, and each lease.
