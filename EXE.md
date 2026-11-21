@@ -319,7 +319,5 @@ Step 4 done 2026-11-21.
 
 ## The trial's leftovers
 
-`rig-trial-2` soaks heaters test-2 and soco test-1 in turn
-(`~/trial/loop.sh`; stop with `rm ~/trial/loop.on`); `rig-trial-1` writes a
-tick a second. Delete both (`ssh exe.dev rm`) on Billy's go (the soak runs
-until then); the check copies are deleted.
+None: `rig-trial-1` and `rig-trial-2` were gone by 2026-11-21 (exe.dev
+lists only the golden), and the check copies were deleted before.
