@@ -297,6 +297,7 @@ defmodule Gate.Engine do
     LOCAL_PATHS=(#{qs(Map.get(local, "paths", []))})
     LOCAL_TOOLS=(#{qs(Map.get(local, "tools", []))})
     LOCAL_OFF=#{if ctx.seed or exe, do: "1", else: "''"}
+    WARM_FORCE=#{if ctx.seed, do: "1", else: "''"}
     HOST=#{if exe, do: "exe", else: "sprite"}
     """
   end

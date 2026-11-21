@@ -15,8 +15,10 @@ defmodule Gate.Golden do
   what the last try left. A warm cache with a seed on the laptop
   (`Gate.Engine.seed/2`) starts from it whenever its key is not the one
   built there: a cold soco PLT took the Sprite down mid-build on every try
-  for a day (2026-10-30). A warm step is green when the cache's key is
-  written; one that stays red (its build fails on `main`) passes, its
+  for a day (2026-10-30). Each cache is built even when its key is
+  current (on a current PLT, a compile and a check), so the golden holds
+  the app's builds even where a part's job dropped one, with no seed then.
+  A warm step is green when the cache's key is written; one that stays red (its build fails on `main`) passes, its
   cache left to the parts that need it.
 
   Prints HEAD's stamp on stdout when every step came to a verdict. Exit 0

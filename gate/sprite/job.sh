@@ -187,10 +187,15 @@ if [ ${#WARM_NAMES[@]} -gt 0 ]; then
     name=${WARM_NAMES[i]} key=${WARM_KEYS[i]}
     keyfile=~/.gate-warm/$NAME-$name
     [ ! -e ~/.gate-warm/"$name" ] || mv ~/.gate-warm/"$name" "$keyfile"
-    [ "$(cat "$keyfile" 2>/dev/null)" != "$key" ] || continue
+    # A golden run (WARM_FORCE) builds each cache even when its key is
+    # current: the build also compiles the app, whose build the step
+    # before may have dropped (an empty .beam), and a golden that lacks it
+    # costs every part a compile (heaters' test build, 100 s, 2026-11-21).
+    current=; [ "$(cat "$keyfile" 2>/dev/null)" != "$key" ] || current=1
+    [ -z "$current" ] || [ "${WARM_FORCE:-}" = 1 ] || continue
     # A golden run's seed (gate/lib/gate/engine.ex, seed/2): whole where
     # this Sprite's may be half built, so the build then only checks it.
-    if [ -f "$d/seed-$name.tar" ]; then
+    if [ -z "$current" ] && [ -f "$d/seed-$name.tar" ]; then
       tar -xf "$d/seed-$name.tar" -C ~ && say "seeded $name" || say "seeding $name failed"
     fi
     say "warming $name (key $key)"
@@ -199,6 +204,8 @@ if [ ${#WARM_NAMES[@]} -gt 0 ]; then
       echo "$key" >"$keyfile"
       lap "warmed $name"
     else
+      # A forced build that failed may have left the cache half written.
+      rm -f "$keyfile"
       lap "warming $name failed; the command will say why"
     fi
     rm -f "$unfinished"

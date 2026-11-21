@@ -288,7 +288,10 @@ the old one, so it kept the empty files; mix does not rebuild a module
 whose .beam alone is missing, so a part now drops the build of any app
 holding an empty .beam before setup (`sprite/job.sh`; heaters' test
 build recompiles in about 100 s), and format 3 remade the golden on
-that.
+that. That golden then lacked heaters' test build altogether, since
+`gate golden` skipped a warm cache whose key was current, so a golden
+run now builds each warm cache anyway (on a current PLT, a compile and
+a check; format 4).
 
 ### 5. Later (not urgent, Billy)
 

@@ -286,6 +286,28 @@ defmodule Gate.CommandsTest do
     assert File.read!(log) =~ "warmed plt"
   end
 
+  @tag gate: %{
+         "warm" => [
+           %{
+             "name" => "plt",
+             "parts" => ["one"],
+             "key" => ["cmd.sh"],
+             "command" => "echo built >>~/builds"
+           }
+         ]
+       }
+  test "golden: a warm cache is built again when its key is current (the build compiles the app)",
+       env do
+    for _ <- 1..2 do
+      {status, _out, err} =
+        Fake.capture(fn -> Gate.Golden.main(Fake.config(env.top), "gate-2") end)
+
+      assert status == 0, err
+    end
+
+    assert File.read!(Path.join(env.root, "gate-2/home/builds")) == "built\nbuilt\n"
+  end
+
   test "stamp <rev>: the stamp as that commit's .gate.json names it", env do
     config = Fake.config(env.top)
     sha = Fake.git(env.top, ["rev-parse", "HEAD"]) |> String.trim()
