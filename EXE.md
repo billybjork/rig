@@ -231,13 +231,16 @@ golden soco's `main` gated green in 232 s (static-1 213, static-2 155,
 test-1 145, test-2 141, static-3 60; the Sprite pool's last soco gates
 took 246 to 280).
 
-Watch: soco's `DevGateTest` "inner-loop commands run beside a held gate"
-(a spawned `mix` must answer within 10 s while the suite runs) has gone
-red on exe twice in its first handful of gates (check 0d, and 7cc5f69's
-test-2 on 2026-11-21, whose output came just after the timeout), against
-once on the Sprites since Nov 4. If it keeps showing, it is soco's to
-make the test hold on 4 vCPU (not by weakening it), or test parts get
-more cores.
+Open: soco's `DevGateTest` "inner-loop commands run beside a held gate"
+(an async test; a spawned child BEAM must reach the gate's admission
+within 10 s while the suite holds every core) went red on test-2 in 3 of
+soco's first 7 gates on exe (7cc5f69, and `main` d73cdff6 and 1ef7d6ac
+on 2026-11-21), against once on the Sprites since Nov 4; the child's
+output lands just after the bound. Making it synchronous passed test-2
+twice but is barred by soco's `AsyncTestDisciplineTest` ratchet ("make
+the new files async-safe instead of raising the ratchet"). Left to
+Billy: raise the bound (a blocked command never enters, so any finite
+bound still catches one) or give soco's test parts 8 vCPU.
 
 Step 3 done 2026-11-21 (Billy's go): the Sprite pool is retired.
 `rig-gate-1` to `-10` are destroyed, `gate/fleet.json` names no Sprites,
