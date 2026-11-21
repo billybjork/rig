@@ -3,8 +3,9 @@ defmodule Gate.Stamp do
   Hashes of files at a commit: the provision stamp a Sprite must carry
   (the project's `stamp` files, in order: its toolchain pins and its
   provision script; with `image`, its pin files and rig's image script),
-  and each warm cache's key (its `key` files and the stamp, so a toolchain
-  bump rebuilds it too).
+  and each warm cache's key (its `key` files, the stamp, so a toolchain
+  bump rebuilds it too, and its command, so a golden made by another
+  command is not taken for this one's).
   """
 
   def stamp(%{image: nil} = config, sha), do: hash(config, sha, config.stamp, "")
@@ -14,7 +15,8 @@ defmodule Gate.Stamp do
   def image,
     do: System.get_env("GATE_IMAGE") || Path.join(Gate.Sprite.root(), "image/provision.sh")
 
-  def warm_key(config, sha, stamp, warm), do: hash(config, sha, warm["key"], stamp)
+  def warm_key(config, sha, stamp, warm),
+    do: hash(config, sha, warm["key"], [stamp, 0, warm["command"] || ""])
 
   @doc """
   What a golden VM made at `sha` holds (`gate keys`, which rigd's `Fleet`

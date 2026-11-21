@@ -599,6 +599,17 @@ defmodule Gate.CheckTest do
       assert warm == name <> "-plt"
       assert key == Gate.Stamp.warm_key(config, sha, stamp, hd(config.warm))
     end
+
+    test "a warm cache's key changes with its command, not only its files", env do
+      config = Fake.config(env.top)
+      sha = Gate.Check.git!(config, ["rev-parse", "HEAD"])
+      stamp = Gate.Stamp.stamp(config, sha)
+      warm = hd(config.warm)
+      other = Map.put(warm, "command", warm["command"] <> " --other")
+
+      refute Gate.Stamp.warm_key(config, sha, stamp, warm) ==
+               Gate.Stamp.warm_key(config, sha, stamp, other)
+    end
   end
 
   describe "on the shared pool" do
