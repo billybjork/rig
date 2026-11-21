@@ -1,17 +1,23 @@
 defmodule Gate.Run do
   @moduledoc """
-  `gate run <command...>`: the command on a dev Sprite (`$GATE_DEV_SPRITE`,
-  else the project's first), on HEAD with the working tree's changes laid
-  over it: the diff against HEAD, staged or not, and the untracked files
-  Git does not ignore. gitleaks scans those first, and no secret goes
-  aboard. The Sprite is readied as a gate's is, and created on first use.
+  `gate run <command...>`, the workbench (rig's EXE.md, step 4): the
+  command on HEAD with the working tree's changes laid over it: the diff
+  against HEAD, staged or not, and the untracked files Git does not
+  ignore. gitleaks scans those first, and no secret goes aboard.
 
-  Its output streams here and goes to `<logs>/sprite-run-*.log`. The exit
+  On exe.dev (`"pool": "exe"`) each run leases its own VM from rigd's
+  `Fleet`, a fresh copy of the golden (4 vCPU / 8 GB, behind every ship's
+  gate), readied as a gate's part is, and removed as the run ends: runs
+  share no Postgres, ports or locks. A VM that fails reruns the command
+  once on another. On a project still on Sprites, it runs on a dev Sprite
+  (`$GATE_DEV_SPRITE`, else `.gate.json`'s first `dev`), created on first
+  use.
+
+  Its output streams here and goes to `<logs>/gate-run-*.log`. The exit
   status is the command's, or 125 when the command could not run there:
-  the Sprite failed, the working tree would not lay over the commit, the
-  scan found a possible secret, or `$SPRITE_RUN_TIMEOUT` seconds (3600)
-  passed. The last line says which. Rex shows it as the record
-  `sprite-run`.
+  the VM failed, the working tree would not lay over the commit, the scan
+  found a possible secret, or `$GATE_RUN_TIMEOUT` seconds (3600) passed.
+  The last line says which. Rex shows it as the record `gate-run`.
   """
 
   alias Gate.{Check, Engine, Stamp, Status}
@@ -19,30 +25,35 @@ defmodule Gate.Run do
   def main(_config, []), do: raise(Gate.Error, "usage: gate run <command...>")
 
   def main(config, argv) do
-    sprite = dev_sprite(config)
+    exe = config.pool == "exe"
+    host = if exe, do: :lease, else: dev_sprite(config)
+    where = if exe, do: "exe.dev", else: host
     command = Enum.join(argv, " ")
-    say = &IO.puts(:stderr, "sprite-run: #{&1}")
+    say = &IO.puts(:stderr, "gate run: #{&1}")
     t0 = System.monotonic_time(:second)
 
     cant_run = fn why ->
       say.("#{why} (exit 125, not the command's result)")
-      Status.report(:error, "sprite-run", why, command)
+      Status.report(:error, "gate-run", why, command)
       125
     end
 
-    Status.report(:working, "sprite-run", "preparing #{sprite}", command)
+    Status.report(:working, "gate-run", "preparing on #{where}", command)
     sha = Check.git!(config, ["rev-parse", "HEAD"])
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> Check.short(sha)
     work = Path.join(System.tmp_dir!(), "gate-run-#{run}-#{System.unique_integer([:positive])}")
     overlay = Path.join(work, "overlay")
 
     try do
-      with :ok <- ensure(sprite),
+      with :ok <- ensure(host),
            {:ok, changed} <- overlay(config, overlay),
            :ok <- scan(overlay) do
-        say.("#{command} on #{sprite}: #{Check.short(sha)} with #{changed} uncommitted path(s)")
-        limit = String.to_integer(System.get_env("SPRITE_RUN_TIMEOUT", "3600"))
-        config = %{config | limits: Map.put(config.limits, "run", limit)}
+        say.("#{command} on #{where}: #{Check.short(sha)} with #{changed} uncommitted path(s)")
+        limit = String.to_integer(System.get_env("GATE_RUN_TIMEOUT", "3600"))
+        limits = Map.put(config.limits, "run", limit)
+        # Its output is read as it comes, so it is polled more often than a gate's part.
+        limits = if exe, do: Map.put(limits, "poll", min(limits["poll"], 3)), else: limits
+        config = %{config | limits: limits}
 
         ctx = %Engine{
           config: config,
@@ -51,29 +62,29 @@ defmodule Gate.Run do
           run: run,
           work: work,
           stream: true,
-          say: &IO.puts(:stderr, &1),
+          say: &IO.puts(:stderr, "gate run: #{&1}"),
           report: fn _part, state, message ->
-            Status.report(state, "sprite-run", message, command)
+            Status.report(state, "gate-run", message, command)
           end
         }
 
-        job = %Engine.Job{name: "sprite-run", argv: argv, overlay: overlay}
-        [r] = Engine.run(ctx, [{job, sprite}])
-        log = Path.join(config.logs, "sprite-run-#{Path.basename(r.log)}")
+        job = %Engine.Job{name: "run", argv: argv, overlay: overlay}
+        [r] = Engine.run(ctx, [{job, host}])
+        log = Path.join(config.logs, "gate-run-#{Path.basename(r.log)}")
         File.rename!(r.log, log)
         secs = System.monotonic_time(:second) - t0
 
         case r.result do
           :overlay ->
             cant_run.(
-              "the working tree could not be laid over #{Check.short(sha)} on #{sprite}; log #{log}"
+              "the working tree could not be laid over #{Check.short(sha)} on #{r.sprite}; log #{log}"
             )
 
           :sprite_failed ->
-            cant_run.("#{sprite} failed after #{secs} s: #{r.why}; log #{log}")
+            cant_run.("#{r.sprite} failed after #{secs} s: #{r.why}; log #{log}")
 
           _ ->
-            say.("exit #{r.rc} in #{secs} s on #{sprite}#{if r.rc != 0, do: "; log #{log}"}")
+            say.("exit #{r.rc} in #{secs} s on #{r.sprite}#{if r.rc != 0, do: "; log #{log}"}")
             r.rc
         end
       else
@@ -89,11 +100,18 @@ defmodule Gate.Run do
       raise Gate.Error, ".gate.json names no dev Sprite"
   end
 
+  defp ensure(:lease) do
+    Gate.Lease.check!()
+    :ok
+  rescue
+    e in Gate.Error -> {:error, e.message}
+  end
+
   defp ensure(sprite) do
     if Gate.Sprite.exists?(sprite) do
       :ok
     else
-      IO.puts(:stderr, "sprite-run: #{sprite}: creating")
+      IO.puts(:stderr, "gate run: #{sprite}: creating")
 
       case Gate.Sprite.create(sprite) do
         {_, 0} -> :ok
@@ -147,7 +165,7 @@ defmodule Gate.Run do
     else
       IO.puts(
         :stderr,
-        "sprite-run: gitleaks not installed; the uncommitted changes go unscanned (brew install gitleaks)"
+        "gate run: gitleaks not installed; the uncommitted changes go unscanned (brew install gitleaks)"
       )
 
       :ok

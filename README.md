@@ -222,7 +222,11 @@ live for both: heaters gates on it since #871 (559 s; the Sprite pool took
 3.5 to 6.5 min on the pool). soco's move needed its PLT warmed in dev, the
 env its dialyzer runs in, and a warm key that includes its command (rig
 0a08630). The Sprite pool is retired (Billy, 2026-11-21): its ten Sprites
-destroyed and rigd's Sprite side of `Fleet` removed. Next is step 4, the
-workbench, which replaces the dev Sprites and with them the Sprite backend.
+destroyed and rigd's Sprite side of `Fleet` removed. Step 4, the
+workbench, is live (2026-11-21): `gate run` (each project's `run-remote`)
+leases its own fresh copy of the golden per run, streams the command's
+output and removes it after. It replaces the dev Sprites, and with them
+the Sprite backend goes. A golden is now synced before its pause (rig
+4119749: an unsynced one gave every heaters copy empty beams).
 
 Then agents on Sprites (step 5).

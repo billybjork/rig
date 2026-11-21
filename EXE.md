@@ -267,6 +267,24 @@ must run locally. The demotions in `rigd.log` are mostly soco agents'
 unslotted `mix test` and compiles, and heaters' and heaters-studio's media
 scripts.
 
+Built 2026-11-21 (Billy chose the name: `run-remote` in each project,
+over `gate run`): `gate run` on a project with `"pool": "exe"` leases its
+own VM from `Fleet` as a session's part does, lays the working tree over
+HEAD (gitleaks first), streams the output (polled every 3 s), and the
+release removes the VM; a VM that fails reruns it once on another. No
+pooled VMs, so nothing hangs on the paused-VM billing question (0a).
+Live: heaters `mix test` of one file in 13 s wall, soco's in 39 s (31 of
+them compiling the commit's changes). `gate/README.md`, "The workbench".
+`exe.max` went from 15 to 20 (Billy) since runs share the cap with
+gates, ships first.
+
+Found on the way (rig 4119749): the golden of 2026-11-21 02:38 had been
+paused straight after `gate golden`, and a `cp` copies the disk, not the
+page cache, so 17 of heaters' test beams were empty on every copy and
+each heaters test part red since (check-fast at 04:45 and 04:53).
+`Fleet` now syncs before the pause, and a golden's keys include `golden
+<format>` so the unsynced one was remade.
+
 ### 5. Later (not urgent, Billy)
 
 - Secrets on the workbench through fnox's `fleet` tier, dev values only.

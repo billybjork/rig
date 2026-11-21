@@ -14,8 +14,9 @@ and rigd's Sprite side of `Fleet` (`Rigd.Fleet`, `Fleet.Sprite`,
 reason. What is live is "On exe.dev" at the end. The rest of this file
 is the Sprite pool's history, kept for what it taught: why a golden only
 sets up, why reruns are host-agnostic, why ships lease first. The
-Sprite backend itself (`lib/gate/sprite.ex`) still serves `gate run` on
-the dev Sprites until the workbench (`EXE.md` step 4).
+Sprite backend itself (`lib/gate/sprite.ex`) goes with the dev Sprites,
+now that the workbench (`gate run` on exe.dev, `EXE.md` step 4) replaces
+them.
 
 ## What exists
 
@@ -191,8 +192,9 @@ it as `"pool": "exe"`: each part's lease (`Gate.Lease`) says `"pool":
   --memory=8GB`, about a second, its caches warm), granted once its SSH
   answers. A release removes it (`rm`) whatever the result, and so does a
   holder that goes without one. So a strike is just the next lease's
-  fresh copy, and a rerun lands on a new VM. At most `exe.max` (15) at
-  once; the rest queue, ships first.
+  fresh copy, and a rerun lands on a new VM. `gate run` (the workbench)
+  leases the same way, as a session. At most `exe.max` (20 since the
+  workbench, 2026-11-21) at once; the rest queue, ships first.
 - **The big size.** A part needing a warm cache whose key (its files,
   the stamp and its command) the golden lacks gets 8 vCPU / 16 GB (`exe.big`): soco's cold dialyzer PLT was
   OOM-killed at 8 GB (EXE.md, check 0d).
@@ -203,7 +205,11 @@ it as `"pool": "exe"`: each part's lease (`Gate.Lease`) says `"pool":
   golden-named VM counts. Every 10 minutes `Fleet` reads the keys again;
   when they differ it copies the golden to `rig-golden-<time>-<hex>` at
   the big size, comments it `refreshing`, runs each project's `gate
-  golden` there, pauses it and writes its golden comment: the swap. The
+  golden` there, syncs its disk (a `cp` copies the disk, not the page
+  cache: the unsynced golden of 2026-11-21 02:38 gave every copy 17
+  empty heaters beams), pauses it and writes its golden comment: the
+  swap. The keys include `golden <format>`, how a golden is made, so a
+  change to that remakes it. The
   old golden goes once no copy of it is under way. Leases go on from the
   old one meanwhile. A red `main` keeps the old golden and tries again in
   30 minutes. With no golden comment anywhere, the VM named `rig-golden`

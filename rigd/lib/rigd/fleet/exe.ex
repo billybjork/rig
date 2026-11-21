@@ -143,7 +143,7 @@ defmodule Rigd.Fleet.Exe do
     st = %{
       opts: opts,
       prefix: exe["golden"],
-      max: exe["max"] || 15,
+      max: exe["max"] || 20,
       size: {exe["cpu"] || 4, exe["memory"] || "8GB"},
       big: {get_in(exe, ["big", "cpu"]) || 8, get_in(exe, ["big", "memory"]) || "16GB"},
       golden: nil,

@@ -2,8 +2,8 @@
 # rig's gate runner, run in a project checkout with a .gate.json (rig's
 # gate/README.md):
 #
-#   gate check [tier]           the split gate on HEAD, on the project's Sprite pool
-#   gate run <command...>       a command on the working tree, on a dev Sprite
+#   gate check [tier]           the split gate on HEAD, a fresh exe.dev VM per part
+#   gate run <command...>       the workbench: a command on the working tree, on its own exe.dev VM
 #   gate pool status|provision|rebuild|exec|warm   the pool's Sprites
 #   gate keys <rev>             what a golden VM made at <rev> holds: the stamp, each warm cache's key
 #   gate golden <host>          set one Sprite or exe.dev VM (<vm>.exe.xyz) up and warm its caches
@@ -14,8 +14,8 @@
 #
 # A gate on a project's own pool and every pool command but status hold the
 # pool's lock, and a run its dev Sprite's (the protocol of libexec/lock, on
-# files under the project's `locks`), so two never share a Sprite. A gate on
-# exe.dev holds none: each part leases its own VM.
+# files under the project's `locks`), so two never share a Sprite. A gate or
+# a run on exe.dev holds none: each part, and each run, leases its own VM.
 set -euo pipefail
 gate=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -48,7 +48,7 @@ case "${1:-} ${2:-}" in
   # pool) takes none either; `gate check` refuses it.
   "check "*) case "$(jq -r '.pool // empty | strings' "$config")" in fleet | exe) ;; *) hold pool.lock GATE_POOL_HELD "$@" ;; esac ;;
   "pool "*) hold pool.lock GATE_POOL_HELD "$@" ;;
-  "run "*) hold "${GATE_DEV_SPRITE:-$(jq -er '.dev[0]' "$config")}.lock" GATE_DEV_HELD "$@" ;;
+  "run "*) [ "$(jq -r '.pool // empty | strings' "$config")" = exe ] || hold "${GATE_DEV_SPRITE:-$(jq -er '.dev[0]' "$config")}.lock" GATE_DEV_HELD "$@" ;;
 esac
 unset DEV_GATE_LOCK
 

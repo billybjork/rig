@@ -31,7 +31,7 @@ defmodule Gate.CommandsTest do
     assert out =~ "working tree laid over"
     assert out =~ "untracked and here"
     assert File.read!(Path.join(env.root, "dev-1/home/proj/cmd.sh")) =~ "# edited"
-    assert [_] = Path.wildcard(Path.join(env.logs, "sprite-run-dev-1-*.log"))
+    assert [_] = Path.wildcard(Path.join(env.logs, "gate-run-dev-1-*.log"))
 
     {status, _out, err} =
       Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["bash", "cmd.sh", "exit", "3"]) end)
@@ -47,6 +47,74 @@ defmodule Gate.CommandsTest do
     assert status == 125
     assert err =~ "dev-1 failed after"
     assert err =~ "(exit 125, not the command's result)"
+  end
+
+  describe "run on exe.dev" do
+    @describetag gate: %{"pool" => "exe"}
+
+    setup do
+      on_exit(fn -> System.delete_env("GATE_FLEET_SOCKET") end)
+    end
+
+    test "leases its own VM from Fleet, lays the working tree over HEAD, streams, gives it back",
+         env do
+      fleet = Gate.FakeFleet.start(~w(gate-1))
+      File.write!(Path.join(env.top, "new.txt"), "untracked and here\n")
+
+      {status, out, err} =
+        Fake.capture(fn ->
+          Gate.Run.main(Fake.config(env.top), ["bash", "cmd.sh", "cat", "new.txt"])
+        end)
+
+      assert status == 0, err
+      assert err =~ "on exe.dev: "
+      assert err =~ "with 1 uncommitted path(s)"
+      assert out =~ "untracked and here"
+      assert err =~ ~r/exit 0 in \d+ s on gate-1/
+
+      assert [%{"pool" => "exe", "part" => "run", "priority" => "session"}] =
+               Gate.FakeFleet.leases(fleet)
+
+      assert Gate.FakeFleet.released(fleet) == [{"gate-1", "green"}]
+      assert [_] = Path.wildcard(Path.join(env.logs, "gate-run-gate-1-*.log"))
+
+      {status, _out, err} =
+        Fake.capture(fn ->
+          Gate.Run.main(Fake.config(env.top), ["bash", "cmd.sh", "exit", "3"])
+        end)
+
+      assert status == 3
+      assert err =~ "exit 3 in"
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    test "a VM that fails reruns the command once on the next VM leased", env do
+      fleet = Gate.FakeFleet.start(~w(gate-1 gate-2))
+      File.mkdir_p!(Path.join(env.root, "gate-1/home"))
+      File.touch!(Path.join(env.root, "gate-1/down"))
+
+      {status, _out, err} =
+        Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
+
+      assert status == 0, err
+      assert err =~ "rerunning on gate-2"
+      assert [{"gate-1", "restarted"}, {"gate-2", "green"}] = Gate.FakeFleet.released(fleet)
+      Gate.FakeFleet.stop(fleet)
+    end
+
+    test "125 when Fleet does not answer, saying so", env do
+      _ = env
+      # A socket path must be short (104 bytes), so not under the test's tmp_dir.
+      System.put_env(
+        "GATE_FLEET_SOCKET",
+        "/tmp/gate-no-fleet-#{System.unique_integer([:positive])}.sock"
+      )
+
+      {status, _out, err} = Fake.capture(fn -> Gate.Run.main(Fake.config(env.top), ["true"]) end)
+      assert status == 125
+      assert err =~ "rigd's Fleet does not answer"
+      assert err =~ "(exit 125, not the command's result)"
+    end
   end
 
   test "pool: provision gates a Sprite and checkpoints it under the stamp; status then says ready",

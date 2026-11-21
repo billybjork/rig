@@ -475,6 +475,7 @@ defmodule Gate.Engine do
   defp ended(ctx, state, part, rc) do
     cond do
       part.phase != "run" and rc == 125 and File.read!(part.log) =~ "cannot overlay" ->
+        give_back(part, "red")
         done(ctx, state, part, :overlay, rc, "the working tree would not lay over the commit")
 
       part.phase != "run" ->

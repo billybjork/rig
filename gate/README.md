@@ -7,12 +7,12 @@ its Sprites, its parts (a command printing `name<TAB>command` lines), its
 provision script and the files whose hash is its stamp, the setup script
 that readies a checkout before each part, the build caches `git clean`
 keeps, and the caches to warm before a part. Its own scripts
-(`check-remote.sh`, `gate-pool.sh`, `sprite-run.sh`, `gate-times.sh`) are
-one-line wrappers around `bin/gate`.
+(`check-remote.sh`, `run-remote.sh`, `gate-times.sh`) are one-line
+wrappers around `bin/gate`.
 
 ```sh
-gate check [tier]            # the split gate on HEAD, on the project's pool
-gate run <command...>        # a command on the working tree, on a dev Sprite
+gate check [tier]            # the split gate on HEAD, a fresh exe.dev VM per part
+gate run <command...>        # the workbench: a command on the working tree, on its own VM
 gate pool status|provision <s>|rebuild <s>|exec <s> <cmd...>|warm [s...]
 gate golden <host>           # set one Sprite or exe.dev VM up and warm its caches
 gate times                   # rewrite the suite's partition weights
@@ -153,6 +153,28 @@ The shared Sprite pool (`"pool": "fleet"`, `rig-gate-1` to `-10`) that
 did this before was retired on 2026-11-21; `gate check` refuses a commit
 whose `.gate.json` still names it, and says to rebase.
 
+## The workbench
+
+`gate run <command...>` (`lib/gate/run.ex`; the projects' `run-remote`)
+runs one command on HEAD with the working tree laid over it: the diff
+against HEAD and the untracked files Git does not ignore, scanned by
+gitleaks first. On a project with `"pool": "exe"` it leases its own VM
+from `Fleet` as a part does (a session's lease, behind every ship's), so
+runs share no Postgres, ports or lock; the VM is readied as a gate's
+part (checkout, setup, `local` off), the command's output streams back
+(polled every 3 s), and the VM is removed as the run ends: only the output comes back,
+not the files the command writes. A VM that
+fails reruns the command once on another. About 13 s pass before the
+command starts (lease, stage, setup).
+
+The exit status is the command's, or 125 when it could not run (`Fleet`
+down, a VM failed twice, the working tree would not lay over the commit,
+a possible secret, or `$GATE_RUN_TIMEOUT` seconds, 3600); the last line
+says which. The log is `<logs>/gate-run-<vm>-<run>-run.log`, and Rex
+shows the run as the record `gate-run`. A run needs no warm cache of its
+own: the golden's are those of `origin/main`, and a branch that changes
+`mix.lock` rebuilds what it uses on the VM.
+
 ## The contract
 
 `gate check` keeps the one the ship worker reads (`shipyard/README.md`, "A
@@ -162,10 +184,11 @@ part's log as `<logs>/<sprite>-<run>-<part>.log`, whose last line is
 `sprite-gate: exit <status>` when its command ran; Rex program status per
 part as `${SHIPYARD_STATUS_ID:-gate}/<part>`.
 
-A gate on a project's own pool and every pool command but `status` hold
-the project's pool lock, and `gate run` its dev Sprite's (`libexec/lock`, the machine gate lock's
-protocol on files under the project's `locks`), so two never share a
-Sprite. The projects keep their own `gate-lock.sh` for the machine lock:
+A gate on a project's own Sprite pool and every pool command but `status`
+hold the project's pool lock, and `gate run` on a dev Sprite that
+Sprite's (`libexec/lock`, the machine gate lock's protocol on files under
+the project's `locks`), so two never share a Sprite; on exe.dev neither
+holds one. The projects keep their own `gate-lock.sh` for the machine lock:
 their suites run it on the Sprites, where there is no rig.
 
 ## Testing

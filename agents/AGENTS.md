@@ -10,7 +10,7 @@ the ship worker) lives in `~/dev/rig`; change it there, not in a copy.
 Billy works in Rex and wants his tabs uncluttered (Billy, 2026-10-28).
 
 - **Shells run in background terminals.** A dev server, long test run,
-  Sprite run, or wait runs in a Rex terminal that no tab shows
+  workbench run, or wait runs in a Rex terminal that no tab shows
   (`~/dev/rig/bin/bg run`): a real terminal in your session, out of Billy's
   way, which he brings into view from the palette ("Background: Show") when
   he wants to look. Prefer it to the harness's own background commands for
@@ -30,7 +30,9 @@ Billy works in Rex and wants his tabs uncluttered (Billy, 2026-10-28).
   render, ML, a local eval, a pool of workers) starts as `bg run --heavy cpu
   -- <command>`, and one that uploads media as `--heavy net`: the laptop
   holds 2 and 1 at once and the rest queue, so the gates' uploads and the
-  agents keep their share. A big run belongs on Modal or a Sprite. A job
+  agents keep their share. A broad test run or dialyzer belongs on
+  the workbench (the project's `run-remote`: its own exe.dev VM per run,
+  only its output comes back), GPU work on Modal. A job
   without a slot that keeps 150% CPU while the laptop is overloaded is put
   in the background by rigd; `rigd heavy` shows the slots and what it did.
 - **No terminal graphics outside nuts-to-soup** (Billy, 2026-11-19). The
