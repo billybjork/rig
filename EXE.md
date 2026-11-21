@@ -293,6 +293,26 @@ that. That golden then lacked heaters' test build altogether, since
 run now builds each warm cache anyway (on a current PLT, a compile and
 a check; format 4).
 
+Live 2026-11-21: heaters' `just run-remote` since #874 (its gate green
+on the repaired copies). soco's `tooling/run-remote.sh` is committed on
+`claude/run-remote` (`163150c46`, worktree
+`soco/.worktrees/claude-run-remote`; it also drops `tooling/gate-pool.sh`
+and `soco-dev-1`) and waits, on Billy's call, until soco deploys again:
+it edits `tooling/railway-service.json`, so it needs `railway-settings.sh
+apply social-objects` before its ship, and soco's rolls fail on an
+unrelated migration. `gate run` already goes to exe.dev for soco, since
+its `.gate.json` says `"pool": "exe"`. The dev Sprites `soco-dev-1` and
+`heaters-dev-1` are destroyed (Billy's go); Fly holds no Sprite.
+
+Left of step 4: the Sprite backend comes out of `gate/` in its own
+change: `lib/gate/sprite.ex` (its helpers that `Gate.Exe` borrows move
+to it), `sprite/launch.sh` and `local.sh` (and `job.sh`'s local-disk
+calls), `gate pool` and `lib/gate/pool.ex`, the Sprite branches of
+`Gate.Host`, `Gate.Run`, `Gate.Check` (a list `pool`, the spare) and
+`Gate.Engine` (free Sprites, the keeper), `.gate.json`'s `dev` and
+`local`, and the tests' fake `sprite` CLI (onto the fake `ssh`). Then
+the `sprite` CLI and its login can go from the laptop.
+
 ### 5. Later (not urgent, Billy)
 
 - Secrets on the workbench through fnox's `fleet` tier, dev values only.
