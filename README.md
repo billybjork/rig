@@ -89,13 +89,21 @@ Production is each project's own (Railway, Render); GPU work is on Modal.
 
 ## Where we are (2026-11-21)
 
-Steps 1 to 4 of the 2026-10-28 plan are live (`history/plan.md`): the shared
-guide and skills, the Rex config, secrets in Bitwarden through fnox, rigd,
-the ship worker, and the gate on exe.dev, whose workbench replaced the dev
-Sprites. Fly holds nothing of rig's.
+Steps 1 to 4 of the 2026-10-28 plan are live (`history/plan.md`): the
+shared guide and skills, the Rex config, secrets in Bitwarden through
+fnox, rigd, the ship worker, and the gate on exe.dev, whose workbench
+replaced the dev Sprites. Fly holds nothing of rig's. Step 5 is parked
+(below).
 
-## Next
+## Parked
 
-Later, and Billy's to start (`history/exe-move.md`, step 5): secrets on the
-workbench through fnox's `fleet` tier (dev values only), and agent sessions
-on exe.dev VMs as Rex hosts, for long delegated work.
+The exe.dev move ends at its step 4 (Billy, 2026-11-21); its step 5 is
+parked, not pending (`history/exe-move.md`). Revisit only if:
+
+- agents should run for hours with the laptop off or away from power, or
+  the laptop becomes the ceiling on how many sessions run at once: agent
+  sessions on exe.dev VMs as Rex hosts (that puts a Claude login, a way
+  to push and dev secrets on a VM);
+- a command that needs dev secrets is too heavy for the laptop: pass that
+  run's values from the laptop's fnox into its own workbench VM, rather
+  than a `fleet` tier whose token lives on every VM.

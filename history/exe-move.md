@@ -1,7 +1,7 @@
 # exe.dev: the gate pool and the workbench
 
-**Done 2026-11-21 through step 4**; step 5 is Billy's, later (rig's
-`README.md`, "Next"). This file, once rig's `EXE.md`, is the plan and its
+**Done 2026-11-21 at step 4**; step 5 is parked (Billy, 2026-11-21; rig's
+`README.md`, "Parked", says when to revisit it). This file, once rig's `EXE.md`, is the plan and its
 record. What is live is in `gate/README.md` and `rigd/README.md` ("Fleet");
 `gate/FLEET.md` is now `history/sprite-fleet.md`, and `sprite/job.sh` is
 `gate/exe/job.sh`.
@@ -317,7 +317,7 @@ actions are gone too.
 
 Step 4 done 2026-11-21.
 
-### 5. Later (not urgent, Billy)
+### 5. Parked (Billy, 2026-11-21: the move ends at step 4)
 
 - Secrets on the workbench through fnox's `fleet` tier, dev values only.
 - Agent sessions on VMs as Rex hosts (`rex server install ssh://…`), for
