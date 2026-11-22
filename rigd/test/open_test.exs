@@ -147,4 +147,46 @@ defmodule Rigd.OpenTest do
 
     refute Open.rotate?(nil, %{"server" => "i1"})
   end
+
+  describe "restore?/4, the first look at a server" do
+    @saved %{"server" => "i0", "sessions" => [%{"session" => "dev", "tabs" => [%{}]}]}
+    @fresh %{"instance_id" => "i1", "started_at" => "2026-11-21T10:00:00Z"}
+    @now ~U[2026-11-21 10:01:00Z]
+
+    defp fresh_tab(panes), do: %{tab("s1", "w1", panes, nil) | server: @fresh}
+
+    test "a Rex just restarted, still as it opens, restores the last server's set" do
+      assert Open.restore?(@saved, [fresh_tab([pane("b1")])], @fresh, @now)
+    end
+
+    test "nothing saved, or saved under this same server (rigd restarted), restores nothing" do
+      refute Open.restore?(nil, [fresh_tab([pane("b1")])], @fresh, @now)
+
+      refute Open.restore?(%{@saved | "server" => "i1"}, [fresh_tab([pane("b1")])], @fresh, @now)
+    end
+
+    test "a saved set without tabs restores nothing" do
+      empty = %{@saved | "sessions" => [%{"session" => "dev", "tabs" => []}]}
+      refute Open.restore?(empty, [fresh_tab([pane("b1")])], @fresh, @now)
+    end
+
+    test "a server that has run a while restores nothing" do
+      refute Open.restore?(@saved, [fresh_tab([pane("b1")])], @fresh, ~U[2026-11-21 10:06:00Z])
+
+      refute Open.restore?(
+               @saved,
+               [fresh_tab([pane("b1")])],
+               %{@fresh | "started_at" => nil},
+               @now
+             )
+    end
+
+    test "a Rex that already shows more than its first tab, or an agent, restores nothing" do
+      two = [fresh_tab([pane("b1")]), %{fresh_tab([pane("b2")]) | window_id: "w2"}]
+      refute Open.restore?(@saved, two, @fresh, @now)
+
+      agent = fresh_tab([pane("b1", %{app: "claude-code"})])
+      refute Open.restore?(@saved, [agent], @fresh, @now)
+    end
+  end
 end

@@ -48,13 +48,16 @@ Production is each project's own (Railway, Render); GPU work is on Modal.
   reopens a tab or pane that closed lately as a new tab in its session, each
   pane at its directory and a Claude pane as `claude --resume`. rigd's
   `Closed` records them in `~/.local/state/rig/closed.jsonl`.
-- "Restore Sessions" (palette; `rex/restore.lua`, `bin/restore`) brings
-  back the sessions open before Rex last restarted (a reboot, a crash): each
-  by name, its tabs and splits, each pane at its directory and a Claude pane
-  as `claude --resume`. rigd's `Open` keeps what is open in
-  `~/.local/state/rig/open.json` (a change written once it has held 20 s, so
-  a shutdown's closing tabs don't count) and moves it to `previous/` when
-  Rex restarts, keeping five.
+- Rex restarting (a reboot, a crash, an update) brings back the sessions
+  open before it by itself: each by name, its tabs and splits, each pane at
+  its directory and a Claude pane as `claude --resume`. rigd's `Open` keeps
+  what is open in `~/.local/state/rig/open.json` (a change written once it
+  has held 20 s, so a shutdown's closing tabs don't count); on its first
+  look at a new Rex that is still as Rex opens it, it moves the file to
+  `previous/` and runs `bin/restore open` on it, and two minutes on raises
+  a notification for any Claude pane that did not come back. A Rex that
+  already shows more is left alone. "Restore Sessions" (palette;
+  `rex/restore.lua`) offers the last five saved sets by hand.
 - `agents/skills/` holds the skills every project shares, each linked into
   `~/.claude/skills` and `~/.agents/skills`: `handoff` (with `bin/handoff`).
 - `gate/` is the gate runner (its own `README.md`; `gate/bin/gate`): a

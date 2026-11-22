@@ -41,4 +41,15 @@ defmodule Rigd.ClosedTest do
     assert [%{panes: [%{block: "b2"}]}] = Closed.unseen(gone, MapSet.new(["b1"]))
     assert Closed.unseen(gone, MapSet.new(["b1", "b2"])) == []
   end
+
+  test "the first look at a restarted Rex is a restart, not every tab closing" do
+    on = fn tabs, id -> Enum.map(tabs, &Map.put(&1, :server, %{"instance_id" => id})) end
+    prev = on.([tab("w1", [pane("b1")])], "i0")
+
+    assert Closed.restarted?(prev, on.([tab("w9", [pane("b9")])], "i1"))
+    refute Closed.restarted?(prev, on.([tab("w1", [pane("b1")])], "i0"))
+    # No tabs to tell by: not taken for a restart.
+    refute Closed.restarted?(prev, [])
+    refute Closed.restarted?([tab("w1", [pane("b1")])], prev)
+  end
 end

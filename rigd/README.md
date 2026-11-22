@@ -43,7 +43,8 @@ Each module's doc says the details; in short:
 - **`Closed`** records each tab and pane that closes, with its Claude
   session, in `~/.local/state/rig/closed.jsonl` (the palette's "Recently
   Closed"); **`Open`** keeps what is open in `~/.local/state/rig/open.json`
-  ("Restore Sessions"), moved to `previous/` when Rex restarts, five kept.
+  ("Restore Sessions"), moved to `previous/` when Rex restarts, five kept,
+  and restores it by itself when the restarted Rex is still as it opens.
 - **`Heavy`** queues heavy local jobs (`bin/heavy cpu|net -- <command>`,
   `bg run --heavy`): 2 CPU slots and 1 for the uplink, on
   `~/Library/Caches/rigd/heavy.sock`. While the 5-minute load is at the

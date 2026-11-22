@@ -10,7 +10,8 @@ defmodule Rigd.Closed do
 
   A pane that leaves its tab without closing (Background: Hide, a move to
   another tab) is not closed. A look on which Rex could not be read is
-  skipped, so an outage does not read as every tab closing.
+  skipped, so an outage does not read as every tab closing, and so is the
+  first look at a restarted Rex: the last server's tabs did not close.
 
   Rex is looked at on each Activity tick and also as soon as a tab or pane
   opens or closes (`priv/events.lua`, run with `rex do --all`), since a tab
@@ -95,7 +96,11 @@ defmodule Rigd.Closed do
     tabs = for t <- tabs, do: %{t | panes: Enum.map(t.panes, &with_claude(&1, claude))}
     Rigd.Bus.publish(:tabs, tabs)
 
-    gone = if st.tabs, do: st.tabs |> closed(tabs, blocks) |> unseen(st.written), else: []
+    gone =
+      if st.tabs && !restarted?(st.tabs, tabs),
+        do: st.tabs |> closed(tabs, blocks) |> unseen(st.written),
+        else: []
+
     if gone != [], do: write(gone, DateTime.utc_now() |> DateTime.truncate(:second))
 
     written =
@@ -128,6 +133,21 @@ defmodule Rigd.Closed do
       t |> Map.put(:kind, kind) |> Map.put(:panes, panes)
     end
   end
+
+  @doc """
+  Whether Rex restarted between two looks: their server instances differ.
+  The tabs of the last server did not close; Open restores them.
+  """
+  def restarted?(prev, tabs) do
+    case {instance(prev), instance(tabs)} do
+      {nil, _} -> false
+      {_, nil} -> false
+      {a, b} -> a != b
+    end
+  end
+
+  defp instance([%{server: %{"instance_id" => id}} | _]), do: id
+  defp instance(_), do: nil
 
   @doc "`closed/3`'s records without the panes already recorded."
   def unseen(gone, written) do

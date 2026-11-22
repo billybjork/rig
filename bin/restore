@@ -5,9 +5,13 @@
 #
 #   restore ls            the saved sets, newest first, numbered
 #   restore pick [BLOCK]  choose one and restore it; cancelling focuses BLOCK
-#   restore open [N]      restore set N (default 1): each session by its
-#                         name, each tab with its splits, each pane at its
-#                         directory and a Claude pane resumed
+#   restore open [N|FILE] restore set N (default 1), or a saved set's file:
+#                         each session by its name, each tab with its
+#                         splits, each pane at its directory and a Claude
+#                         pane resumed
+#   restore check FILE    the set's Claude panes whose session is not
+#                         running, one title per line (rigd's automatic
+#                         restore asks this once the resumed agents start)
 #
 # A tab whose Claude sessions all run already is skipped, so restoring twice
 # doesn't open a conversation twice. Other tabs are opened again each time.
@@ -43,10 +47,17 @@ running_claude() {
   return 0
 }
 
-restore_set() {
-  local n=${1:-1} f running live label tabs sid count
-  f=$(sets | sed -n "${n}p")
+# A saved set's file, given its number in `restore ls` or its path.
+set_file() {
+  local n=${1:-1} f
+  if [ -f "$n" ]; then f=$n; else f=$(sets | sed -n "${n}p"); fi
   [ -n "$f" ] || fail "no saved set number $n (restore ls)"
+  echo "$f"
+}
+
+restore_set() {
+  local f running live label tabs sid count
+  f=$(set_file "${1:-1}")
   running=$(running_claude | jq -Rsc 'split("\n") | map(select(. != ""))')
   live=$(rex ls --json | jq -c '[.sessions[] | {label, session_id}]')
 
@@ -85,9 +96,19 @@ restore_set() {
   done
 }
 
+# The set's Claude panes not running now, by title (else directory).
+check_set() {
+  local f
+  f=$(set_file "${1:?usage: restore check FILE}")
+  jq -r --argjson running "$(running_claude | jq -Rsc 'split("\n") | map(select(. != ""))')" '
+    [.. | objects | select(.claude_session?) | select(.claude_session as $id | $running | index($id) | not)]
+    | .[] | .title // .cwd // .claude_session' "$f"
+}
+
 case "${1:-}" in
   ls) list ;;
   open) restore_set "${2:-1}" ;;
+  check) check_set "${2:-}" ;;
   pick)
     # Run in a tab of its own (rex/restore.lua), which closes when this exits.
     back=${2:-}
@@ -102,5 +123,5 @@ case "${1:-}" in
     fi
     [ -z "$back" ] || rex focus -s "$REX_SESSION" "$back" >/dev/null 2>&1 || true
     ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
+  *) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 64 ;;
 esac
