@@ -103,6 +103,15 @@ a. **Not answerable from the CLI.** `billing usage` and `billing invoices`
    standalone VM is not billed for CPU and memory. The pool below keeps no
    idle VMs, so it does not depend on the answer; the workbench's pooled
    VMs would (ask support, or read December's invoice).
+
+   **Answered by exe.dev support 2026-11-22:** a paused standalone VM is
+   not billed for CPU or memory, only its disk (which counts against the
+   100 GB like any copy's, b). There is no way to see a standalone VM's
+   metered usage yet; support filed a feature request. A pool of paused
+   workers would buy nothing here anyway: ten copies of the golden are
+   made in 2.3 s and ten paused VMs resume in 3.3 s (c), and a paused
+   worker keeps its disk billed and its caches ageing, so "no standing
+   pool" stays.
 b. A VM's disk goes to 1024 GB (`resize --disk`; above that support
    reviews it). Every copy counts in full: 15 VMs of ~15 GB read 229 GB.
    Over the 100 GB allowance, disk is $0.08/GiB-month, averaged over the
@@ -275,7 +284,8 @@ over `gate run`): `gate run` on a project with `"pool": "exe"` leases its
 own VM from `Fleet` as a session's part does, lays the working tree over
 HEAD (gitleaks first), streams the output (polled every 3 s), and the
 release removes the VM; a VM that fails reruns it once on another. No
-pooled VMs, so nothing hangs on the paused-VM billing question (0a).
+pooled VMs (support has since said a paused VM bills only its disk,
+0a; a copy is as fast as a resume, so that changes nothing).
 Live: heaters `mix test` of one file in 13 s wall, soco's in 39 s (31 of
 them compiling the commit's changes). `gate/README.md`, "The workbench".
 `exe.max` went from 15 to 20 (Billy) since runs share the cap with

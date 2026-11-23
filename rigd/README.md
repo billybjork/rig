@@ -69,6 +69,8 @@ name, the VM sizes and the cap.
   the next lease's fresh copy and a rerun lands on a new VM. At most
   `exe.max` (20) at once; the rest queue, a ship's leases ahead of every
   session's.
+  A paused VM bills only its disk (exe.dev support, 2026-11-22), but a
+  copy is as fast as a resume, so paused workers would buy nothing.
 - **The big size.** A part needing a warm cache whose key (its files, the
   stamp and its command) the golden lacks gets 8 vCPU / 16 GB (`exe.big`):
   soco's cold dialyzer PLT was OOM-killed at 8 GB.
