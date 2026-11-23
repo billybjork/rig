@@ -105,7 +105,8 @@ defmodule Rigd.FleetExeTest do
       deadline: Path.expand("../../gate/libexec/deadline", __DIR__),
       ssh: ssh,
       answer_ms: 10,
-      exe: %{"golden" => "rig-golden", "max" => 2}
+      exe: %{"golden" => "rig-golden", "max" => 2},
+      keys_dir: Path.join(root, "golden-keys")
     ]
 
     %{root: root, opts: opts}
@@ -119,8 +120,10 @@ defmodule Rigd.FleetExeTest do
     File.write!(Path.join(dir, "created"), created)
   end
 
-  defp golden(root, keys \\ @keys, name \\ "rig-golden"),
-    do: vm(root, name, "paused", Rigd.Fleet.Golden.comment(keys))
+  defp golden(root, keys \\ @keys, name \\ "rig-golden") do
+    Rigd.Fleet.Golden.remember(Path.join(root, "golden-keys"), keys)
+    vm(root, name, "paused", Rigd.Fleet.Golden.comment(keys))
+  end
 
   defp vms(root), do: root |> Path.join("vms") |> File.ls!() |> Enum.sort()
 
@@ -337,7 +340,47 @@ defmodule Rigd.FleetExeTest do
     [_, after_sync] = String.split(calls, "#{name}.exe.xyz sync\n", parts: 2)
     assert after_sync =~ "exe.dev pause #{name}"
     refute String.split(calls, "#{name}.exe.xyz sync") |> hd() =~ "exe.dev pause #{name}"
-    assert File.read!(Path.join([root, "vms", name, "comment"])) =~ "golden #{Exe.format()}"
+
+    assert File.read!(Path.join([root, "vms", name, "comment"])) ==
+             Rigd.Fleet.Golden.comment(@keys)
+
+    assert @keys["golden"] == Exe.format()
+  end
+
+  test "a golden whose comment names each key (before the digest) is the golden; one whose keys this laptop lacks is too, and its warm parts get the big size",
+       %{root: root, opts: opts} do
+    vm(
+      root,
+      "rig-golden",
+      "paused",
+      "golden " <> Enum.map_join(Enum.sort(@keys), " ", fn {k, v} -> "#{k} #{v}" end)
+    )
+
+    start(opts)
+    until(&ready?/0)
+    Process.sleep(100)
+    assert Exe.status().golden == "rig-golden"
+    refute calls(root) =~ "exe.dev cp rig-golden rig-golden-"
+    stop_supervised!(Rigd.Fleet.Supervisor)
+
+    File.rm_rf!(Path.join(root, "golden-keys"))
+
+    File.write!(
+      Path.join([root, "vms", "rig-golden", "comment"]),
+      Rigd.Fleet.Golden.comment(@keys)
+    )
+
+    File.rm!(Path.join(root, "calls"))
+    start(opts)
+    until(fn -> Exe.status().golden == "rig-golden" and Exe.status().target == @keys end)
+    Process.sleep(100)
+    refute calls(root) =~ "exe.dev cp rig-golden rig-golden-"
+    assert Exe.status().keys == %{}
+
+    a = lease(opts, [@keys["proj-plt"]])
+    assert %{"granted" => host} = recv(a)
+    name = String.replace_suffix(host, ".exe.xyz", "")
+    assert calls(root) =~ "exe.dev cp rig-golden #{name} --standalone --cpu=8 --memory=16GB"
   end
 
   test "a seed without a golden comment is leased from, then refreshed", %{root: root, opts: opts} do

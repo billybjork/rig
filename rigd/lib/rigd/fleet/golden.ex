@@ -7,22 +7,68 @@ defmodule Rigd.Fleet.Golden do
   detached worktree of `origin/main` that is removed after. The primary
   checkout's branch and tree are never touched. Each run's output goes to
   `~/Library/Logs/rigd-fleet/`. A golden's comment names the keys it holds
-  (`comment/1`, `comment_keys/1`).
+  by their digest (`comment/1`, `held/1`).
   """
 
-  @doc "A golden's comment: `golden <name> <hex> ...`, sorted."
-  def comment(keys),
-    do: "golden " <> Enum.map_join(Enum.sort(keys), " ", fn {k, v} -> "#{k} #{v}" end)
+  @doc """
+  A golden's comment: `golden <digest>` (`digest/1`). exe.dev refuses a
+  comment past 200 bytes, and naming each key outgrew that at seven
+  (2026-11-22: two refreshes failed and heaters' new warm cache never reached
+  a golden), so the keys themselves are kept on the laptop (`remember/2`).
+  """
+  def comment(keys), do: "golden " <> digest(keys)
 
-  @doc "The keys a `golden ...` comment names, or nil for any other text."
-  def comment_keys(line) do
-    case Regex.run(~r/golden((?: [\w.-]+ [0-9a-f]{16})+)/, line) do
-      [_, pairs] ->
-        pairs |> String.split() |> Enum.chunk_every(2) |> Map.new(fn [k, v] -> {k, v} end)
+  @doc "16 hex digits naming a set of keys; the same keys give the same digest."
+  def digest(keys) do
+    text = Enum.map_join(Enum.sort(keys), "\n", fn {k, v} -> "#{k} #{v}" end)
+    # :erlang.md5 is in erts: the release carries no :crypto (release_apps_test).
+    text |> :erlang.md5() |> binary_part(0, 8) |> Base.encode16(case: :lower)
+  end
 
-      nil ->
+  @doc """
+  What a golden comment says it holds, `%{digest, keys}`, or nil for any
+  other text. `keys` is nil when the comment names only the digest: they are
+  looked up with `recall/2`. A comment of the old kind (`golden <name> <hex>
+  ...`) names the keys themselves.
+  """
+  def held(line) do
+    cond do
+      m = Regex.run(~r/^golden ([0-9a-f]{16})$/, line) ->
+        %{digest: Enum.at(m, 1), keys: nil}
+
+      m = Regex.run(~r/golden((?: [\w.-]+ [0-9a-f]{16})+)/, line) ->
+        keys =
+          m
+          |> Enum.at(1)
+          |> String.split()
+          |> Enum.chunk_every(2)
+          |> Map.new(fn [k, v] -> {k, v} end)
+
+        %{digest: digest(keys), keys: keys}
+
+      true ->
         nil
     end
+  end
+
+  @doc "Keeps `keys` in `dir` under their digest, for `recall/2`."
+  def remember(dir, keys) do
+    File.mkdir_p!(dir)
+    text = Enum.map_join(Enum.sort(keys), "", fn {k, v} -> "#{k} #{v}\n" end)
+    File.write!(Path.join(dir, digest(keys)), text)
+  end
+
+  @doc """
+  The keys `remember/2` kept under `digest`, or nil. Without them (a new
+  laptop) the golden is still known by its digest; every part that needs a
+  warm cache gets the big size until the next golden.
+  """
+  def recall(dir, digest) do
+    with {:ok, text} <- File.read(Path.join(dir, digest)),
+         keys = parse_keys(text),
+         true <- digest(keys) == digest,
+         do: keys,
+         else: (_ -> nil)
   end
 
   @doc """

@@ -9,13 +9,31 @@ defmodule Rigd.FleetTest do
   @stamp "0123456789abcdef"
   @newer "fedcba9876543210"
 
-  test "a golden's comment names its keys, and only such a comment reads as one" do
+  test "a golden's comment names its keys by digest, within exe.dev's 200 bytes, however many", %{
+    tmp_dir: tmp
+  } do
     keys = %{"soco" => @stamp, "heaters" => @newer, "soco-plt" => @newer}
     comment = Golden.comment(keys)
-    assert comment == "golden heaters #{@newer} soco #{@stamp} soco-plt #{@newer}"
-    assert Golden.comment_keys(comment) == keys
-    assert Golden.comment_keys("refreshing") == nil
-    assert Golden.comment_keys("") == nil
+    assert comment =~ ~r/^golden [0-9a-f]{16}$/
+    assert Golden.held(comment) == %{digest: Golden.digest(keys), keys: nil}
+    assert Golden.digest(Map.put(keys, "soco", @newer)) != Golden.digest(keys)
+
+    many = Map.new(1..40, &{"project-#{&1}-a-long-warm-cache-name", @stamp})
+    assert byte_size(Golden.comment(many)) <= 200
+
+    assert Golden.recall(tmp, Golden.digest(keys)) == nil
+    Golden.remember(tmp, keys)
+    assert Golden.recall(tmp, Golden.digest(keys)) == keys
+
+    assert Golden.held("refreshing") == nil
+    assert Golden.held("") == nil
+  end
+
+  test "a golden comment of the old kind, naming each key, still reads as one" do
+    keys = %{"soco" => @stamp, "heaters" => @newer}
+
+    assert Golden.held("golden heaters #{@newer} soco #{@stamp}") ==
+             %{digest: Golden.digest(keys), keys: keys}
   end
 
   test "enqueue: ships in arrival order, then sessions in theirs" do

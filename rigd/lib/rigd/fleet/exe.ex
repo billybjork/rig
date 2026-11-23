@@ -18,8 +18,9 @@ defmodule Rigd.Fleet.Exe do
   waiter after a pause that grows to 5 minutes.
 
   The golden is the newest paused VM named `<exe.golden>*` whose comment
-  reads `golden <name> <hex> ...`: each project's stamp and warm keys on
-  `origin/main` when it was made (`gate keys`, `Rigd.Fleet.Golden.keys/2`).
+  reads `golden <digest>`: the digest of each project's stamp and warm keys
+  on `origin/main` when it was made (`gate keys`, `Rigd.Fleet.Golden.keys/2`),
+  the keys themselves kept on the laptop under it (`keys_dir`).
   Every 10 minutes it reads those keys again; when they differ, it copies
   the golden to `<exe.golden>-<time>` at the big size (the cold PLT), runs
   each project's `gate golden` there, flushes its disk (`sync`), pauses it
@@ -50,7 +51,7 @@ defmodule Rigd.Fleet.Exe do
   alias Rigd.Fleet.Golden
 
   # How a golden is made, as a key the golden must hold (16 hex digits, as
-  # `Golden.comment_keys/1` reads them): 2 since its disk is synced before
+  # `Golden.held/1` reads them): 2 since its disk is synced before
   # the pause; 3 since a part drops an app build holding an empty .beam
   # (`gate/exe/job.sh`); 4 since `gate golden` builds each warm cache even
   # when its key is current, which compiles the app build 3 dropped.
@@ -84,14 +85,15 @@ defmodule Rigd.Fleet.Exe do
 
   @doc """
   The golden among `vms` (`ls --json`'s list): the newest paused VM named
-  `prefix*` with a golden comment, as `%{name, keys}`, or nil.
+  `prefix*` with a golden comment, as `%{name, digest, keys}` (`keys` nil
+  when the comment names only their digest), or nil.
   """
   def golden(vms, prefix) do
     vms
     |> Enum.filter(&(String.starts_with?(&1["vm_name"], prefix) and &1["status"] == "paused"))
     |> Enum.flat_map(fn vm ->
-      if keys = Golden.comment_keys(vm["comment"] || ""),
-        do: [{vm["created_at"] || "", %{name: vm["vm_name"], keys: keys}}],
+      if held = Golden.held(vm["comment"] || ""),
+        do: [{vm["created_at"] || "", Map.put(held, :name, vm["vm_name"])}],
         else: []
     end)
     |> Enum.max_by(&elem(&1, 0), fn -> nil end)
@@ -126,7 +128,7 @@ defmodule Rigd.Fleet.Exe do
   end
 
   defp golden_vm?(vm),
-    do: vm["status"] == "paused" and Golden.comment_keys(vm["comment"] || "") != nil
+    do: vm["status"] == "paused" and Golden.held(vm["comment"] || "") != nil
 
   @doc "The queue with `waiter` behind every waiter of its priority or higher: ships, then sessions."
   def enqueue(queue, %{priority: :ship} = waiter) do
@@ -319,9 +321,12 @@ defmodule Rigd.Fleet.Exe do
   defp done(st, :list, {:ok, vms}) do
     golden =
       st.golden ||
-        golden(vms, st.prefix) ||
+        with(
+          %{keys: nil} = g <- golden(vms, st.prefix),
+          do: %{g | keys: Golden.recall(keys_dir(st.opts), g.digest)}
+        ) ||
         Enum.find_value(vms, fn vm ->
-          if vm["vm_name"] == st.prefix, do: %{name: st.prefix, keys: %{}}
+          if vm["vm_name"] == st.prefix, do: %{name: st.prefix, digest: nil, keys: %{}}
         end)
 
     if golden == nil, do: Logger.warning("fleet: exe: no golden VM (#{st.prefix}*)")
@@ -383,7 +388,8 @@ defmodule Rigd.Fleet.Exe do
   end
 
   defp done(st, {:refresh, name}, {:golden, golden}) do
-    Logger.info("fleet: exe: #{name} is the golden (#{Golden.comment(golden.keys)})")
+    keys = Enum.map_join(Enum.sort(golden.keys), " ", fn {k, v} -> "#{k} #{v}" end)
+    Logger.info("fleet: exe: #{name} is the golden (#{golden.digest}: #{keys})")
     old = if st.golden && st.golden.name != name, do: [st.golden.name], else: []
 
     %{
@@ -490,6 +496,10 @@ defmodule Rigd.Fleet.Exe do
 
   defp keys_every(st), do: st.opts[:keys_every_ms] || @every
 
+  # Where each golden's keys are kept under their digest (`Golden.remember/2`).
+  defp keys_dir(opts),
+    do: opts[:keys_dir] || Path.expand("~/Library/Application Support/rigd/golden-keys")
+
   defp refresh(st) do
     now = System.monotonic_time(:millisecond)
 
@@ -497,7 +507,7 @@ defmodule Rigd.Fleet.Exe do
       not st.listed or st.target == %{} or st.refresh != nil or st.draining != nil -> st
       st.refresh_after && now < st.refresh_after -> st
       st.golden == nil -> st
-      st.golden.keys == st.target -> st
+      st.golden.digest == Golden.digest(st.target) -> st
       true -> start_refresh(st)
     end
   end
@@ -526,8 +536,9 @@ defmodule Rigd.Fleet.Exe do
          keys = Map.put(keys, "golden", @format),
          :ok <- flush(opts, host),
          :ok <- api(opts, ["pause", name], 300),
+         :ok <- Golden.remember(keys_dir(opts), keys),
          :ok <- api(opts, ["comment", name, Golden.comment(keys)], 60) do
-      {:golden, %{name: name, keys: keys}}
+      {:golden, %{name: name, digest: Golden.digest(keys), keys: keys}}
     end
   end
 

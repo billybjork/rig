@@ -75,9 +75,13 @@ name, the VM sizes and the cap.
   stamp and its command) the golden lacks gets 8 vCPU / 16 GB (`exe.big`):
   soco's cold dialyzer PLT was OOM-killed at 8 GB.
 - **The golden** is the newest paused `rig-golden*` VM whose comment reads
-  `golden heaters <stamp> heaters-plt <key> soco ...`: each project's stamp
-  and warm keys on `origin/main` when it was made (`gate keys
-  origin/main`). Every 10 minutes `Fleet` reads the keys again; when they
+  `golden <digest>`: the digest of each project's stamp and warm keys on
+  `origin/main` when it was made (`gate keys origin/main`). The keys
+  themselves are kept under their digest in
+  `~/Library/Application Support/rigd/golden-keys/` (exe.dev caps a comment
+  at 200 bytes; naming each key outgrew it at seven). Without that file the
+  golden still stands, but every part needing a warm cache gets the big
+  size until the next one. Every 10 minutes `Fleet` reads the keys again; when they
   differ it copies the golden to `rig-golden-<time>-<hex>` at the big size,
   runs each project's `gate golden` there, syncs its disk (a `cp` copies
   the disk, not the page cache), pauses it and writes its comment: the
