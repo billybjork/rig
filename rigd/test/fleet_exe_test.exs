@@ -63,7 +63,14 @@ defmodule Rigd.FleetExeTest do
 
   defmodule Golden do
     @moduledoc "Each project's keys and setup as the test sets them in persistent_term."
-    def keys(_gate, _dir), do: {:ok, :persistent_term.get({__MODULE__, :target})}
+    def keys(gate, dir) do
+      if :persistent_term.get({__MODULE__, :slow}, false) do
+        Process.sleep(20)
+        keys(gate, dir)
+      else
+        {:ok, :persistent_term.get({__MODULE__, :target})}
+      end
+    end
 
     def run(_gate, _dir, host) do
       File.write!(:persistent_term.get({__MODULE__, :log}), "golden #{host}\n", [:append])
@@ -84,7 +91,11 @@ defmodule Rigd.FleetExeTest do
     System.put_env("FAKE_EXE", root)
     :persistent_term.put({Golden, :target}, @keys)
     :persistent_term.put({Golden, :log}, Path.join(root, "golden.log"))
-    on_exit(fn -> :persistent_term.erase({Golden, :result}) end)
+
+    on_exit(fn ->
+      :persistent_term.erase({Golden, :result})
+      :persistent_term.erase({Golden, :slow})
+    end)
 
     opts = [
       projects: ["/nowhere/proj"],
@@ -295,6 +306,24 @@ defmodule Rigd.FleetExeTest do
     a = lease(opts)
     assert %{"granted" => _} = recv(a)
     assert calls(root) =~ "exe.dev cp #{name} rig-part-"
+  end
+
+  test "a read of the keys slower than the interval does not end the reads",
+       %{root: root, opts: opts} do
+    golden(root)
+    start(Keyword.put(opts, :keys_every_ms, 50))
+    until(&ready?/0)
+
+    # Several intervals pass while one read hangs.
+    :persistent_term.put({Golden, :slow}, true)
+    Process.sleep(300)
+    assert :sys.get_state(Exe).reading
+    :persistent_term.put({Golden, :slow}, false)
+    until(fn -> :sys.get_state(Exe).reading == nil end)
+
+    # A later change is still read, with no nudge.
+    :persistent_term.put({Golden, :target}, @newer)
+    until(fn -> ready?(@newer) end)
   end
 
   test "a golden made the old way (no sync before its pause) is remade, its disk synced before the pause",

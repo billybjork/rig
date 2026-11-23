@@ -235,8 +235,12 @@ defmodule Rigd.Fleet.Exe do
     {:noreply, task(st, :list, fn -> list(opts) end)}
   end
 
+  # Each `:keys` schedules the next, whether or not a read is under way: a
+  # read slower than the interval (a `git fetch` stalled on the network,
+  # 2026-11-22) otherwise ended the reads for good, and with them every
+  # golden refresh.
   def handle_info(:keys, %{reading: nil} = st) do
-    Process.send_after(self(), :keys, @every)
+    Process.send_after(self(), :keys, keys_every(st))
     %{golden: golden, gate: gate, projects: projects} = Map.new(st.opts)
 
     t =
@@ -256,7 +260,10 @@ defmodule Rigd.Fleet.Exe do
     {:noreply, %{st | reading: t.ref}}
   end
 
-  def handle_info(:keys, st), do: {:noreply, st}
+  def handle_info(:keys, st) do
+    Process.send_after(self(), :keys, keys_every(st))
+    {:noreply, st}
+  end
 
   def handle_info({ref, keys}, %{reading: ref} = st) do
     Process.demonitor(ref, [:flush])
@@ -480,6 +487,8 @@ defmodule Rigd.Fleet.Exe do
   end
 
   # --- the golden
+
+  defp keys_every(st), do: st.opts[:keys_every_ms] || @every
 
   defp refresh(st) do
     now = System.monotonic_time(:millisecond)
