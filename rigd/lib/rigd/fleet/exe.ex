@@ -34,6 +34,14 @@ defmodule Rigd.Fleet.Exe do
   installs what it lacks). With no golden comment anywhere, the VM named
   `exe.golden` is the seed (keys unknown, so it is refreshed first).
 
+  It is remade for staleness too: when `origin/main` has changed at least
+  `exe.refresh.files` Elixir sources of one project (30) since the golden's
+  commit (`Golden.behind/2`), and the golden is at least
+  `exe.refresh.minutes` old (60). Every part compiles what changed since
+  the golden before its checks: soco's took 38 s in dev and 48 s in test on
+  a 6-hour-old golden (2026-11-23). A refresh whose keys are unchanged has
+  no cold cache to build, so it takes the parts' size, not the big one.
+
   Every 10 minutes, and at start, it removes what nothing holds: part VMs
   (`rig-part-*`) not leased, and golden-named VMs that are neither the
   golden nor the one being made (a refresh that rigd's restart cut off).
@@ -85,20 +93,40 @@ defmodule Rigd.Fleet.Exe do
 
   @doc """
   The golden among `vms` (`ls --json`'s list): the newest paused VM named
-  `prefix*` with a golden comment, as `%{name, digest, keys}` (`keys` nil
-  when the comment names only their digest), or nil.
+  `prefix*` with a golden comment, as `%{name, digest, keys, made}` (`keys`
+  nil when the comment names only their digest; `made` nil when its creation
+  time does not parse), or nil.
   """
   def golden(vms, prefix) do
     vms
     |> Enum.filter(&(String.starts_with?(&1["vm_name"], prefix) and &1["status"] == "paused"))
     |> Enum.flat_map(fn vm ->
       if held = Golden.held(vm["comment"] || ""),
-        do: [{vm["created_at"] || "", Map.put(held, :name, vm["vm_name"])}],
+        do: [
+          {vm["created_at"] || "",
+           Map.merge(held, %{name: vm["vm_name"], made: made(vm["created_at"])})}
+        ],
         else: []
     end)
     |> Enum.max_by(&elem(&1, 0), fn -> nil end)
     |> then(&(&1 && elem(&1, 1)))
   end
+
+  defp made(text) do
+    case DateTime.from_iso8601(text || "") do
+      {:ok, at, _} -> at
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Whether a golden made at `made` is stale at `now`: `files` Elixir sources
+  behind `origin/main`, against `limit` (`%{files, minutes}`).
+  """
+  def stale?(_files, nil, _now, _limit), do: false
+
+  def stale?(files, made, now, limit),
+    do: files >= limit.files and DateTime.diff(now, made, :minute) >= limit.minutes
 
   @doc "Whether a part needing the warm keys `warm` needs the big size on a golden holding `keys`."
   def big?(keys, warm), do: Enum.any?(warm, &(&1 not in Map.values(keys || %{})))
@@ -150,7 +178,14 @@ defmodule Rigd.Fleet.Exe do
       max: exe["max"] || 20,
       size: {exe["cpu"] || 4, exe["memory"] || "8GB"},
       big: {get_in(exe, ["big", "cpu"]) || 8, get_in(exe, ["big", "memory"]) || "16GB"},
+      stale: %{
+        files: get_in(exe, ["refresh", "files"]) || 30,
+        minutes: get_in(exe, ["refresh", "minutes"]) || 60
+      },
       golden: nil,
+      # How many Elixir sources origin/main changed since the golden's commit
+      # (the project that moved farthest).
+      behind: 0,
       # Whether a listing has come back since start.
       listed: false,
       # The projects' keys on origin/main: what the golden should hold.
@@ -218,6 +253,7 @@ defmodule Rigd.Fleet.Exe do
        golden: st.golden && st.golden.name,
        keys: (st.golden && st.golden.keys) || %{},
        target: st.target,
+       behind: st.behind,
        refresh: st.refresh,
        leases: leases,
        waiting: length(st.queue),
@@ -245,18 +281,28 @@ defmodule Rigd.Fleet.Exe do
     Process.send_after(self(), :keys, keys_every(st))
     %{golden: golden, gate: gate, projects: projects} = Map.new(st.opts)
 
+    name = st.golden && st.golden.name
+    commits = (st.golden && st.golden.commits) || %{}
+
     t =
       Task.async(fn ->
-        Enum.reduce_while(projects, %{}, fn dir, acc ->
-          case golden.keys(gate, dir) do
-            {:ok, keys} ->
-              {:cont, Map.merge(acc, keys)}
+        keys =
+          Enum.reduce_while(projects, %{}, fn dir, acc ->
+            case golden.keys(gate, dir) do
+              {:ok, keys} ->
+                {:cont, Map.merge(acc, keys)}
 
-            {:error, why} ->
-              Logger.warning("fleet: exe: no keys for #{dir}: #{why}")
-              {:halt, nil}
-          end
-        end)
+              {:error, why} ->
+                Logger.warning("fleet: exe: no keys for #{dir}: #{why}")
+                {:halt, nil}
+            end
+          end)
+
+        behind =
+          if keys,
+            do: projects |> Enum.map(&golden.behind(&1, commits[Path.basename(&1)])) |> Enum.max()
+
+        {keys, name, behind}
       end)
 
     {:noreply, %{st | reading: t.ref}}
@@ -267,10 +313,12 @@ defmodule Rigd.Fleet.Exe do
     {:noreply, st}
   end
 
-  def handle_info({ref, keys}, %{reading: ref} = st) do
+  def handle_info({ref, {keys, name, behind}}, %{reading: ref} = st) do
     Process.demonitor(ref, [:flush])
     keys = keys && Map.put(keys, "golden", @format)
-    {:noreply, refresh(%{st | target: keys || st.target, reading: nil})}
+    # A golden swapped in while this read ran was not the one measured.
+    behind = if behind && st.golden && st.golden.name == name, do: behind, else: st.behind
+    {:noreply, refresh(%{st | target: keys || st.target, behind: behind, reading: nil})}
   end
 
   def handle_info({ref, result}, st) when is_map_key(st.tasks, ref) do
@@ -326,7 +374,14 @@ defmodule Rigd.Fleet.Exe do
           do: %{g | keys: Golden.recall(keys_dir(st.opts), g.digest)}
         ) ||
         Enum.find_value(vms, fn vm ->
-          if vm["vm_name"] == st.prefix, do: %{name: st.prefix, digest: nil, keys: %{}}
+          if vm["vm_name"] == st.prefix,
+            do: %{name: st.prefix, digest: nil, keys: %{}, made: nil}
+        end)
+
+    golden =
+      golden &&
+        Map.put_new_lazy(golden, :commits, fn ->
+          if golden.digest, do: Golden.commits(keys_dir(st.opts), golden.digest), else: %{}
         end)
 
     if golden == nil, do: Logger.warning("fleet: exe: no golden VM (#{st.prefix}*)")
@@ -395,6 +450,7 @@ defmodule Rigd.Fleet.Exe do
     %{
       st
       | golden: golden,
+        behind: 0,
         refresh: nil,
         refresh_failures: 0,
         retired: st.retired ++ old,
@@ -504,23 +560,32 @@ defmodule Rigd.Fleet.Exe do
     now = System.monotonic_time(:millisecond)
 
     cond do
-      not st.listed or st.target == %{} or st.refresh != nil or st.draining != nil -> st
-      st.refresh_after && now < st.refresh_after -> st
-      st.golden == nil -> st
-      st.golden.digest == Golden.digest(st.target) -> st
-      true -> start_refresh(st)
+      not st.listed or st.target == %{} or st.refresh != nil or st.draining != nil ->
+        st
+
+      st.refresh_after && now < st.refresh_after ->
+        st
+
+      st.golden == nil ->
+        st
+
+      st.golden.digest != Golden.digest(st.target) ->
+        start_refresh(st, "holds other keys than origin/main", st.big)
+
+      stale?(st.behind, st.golden.made, DateTime.utc_now(), st.stale) ->
+        start_refresh(st, "is #{st.behind} sources behind origin/main", st.size)
+
+      true ->
+        st
     end
   end
 
-  defp start_refresh(st) do
+  defp start_refresh(st, why, {cpu, memory}) do
     name = "#{st.prefix}-#{suffix()}"
     source = st.golden.name
-    {cpu, memory} = st.big
     opts = st.opts
 
-    Logger.info(
-      "fleet: exe: the golden #{source} holds other keys than origin/main; making #{name}"
-    )
+    Logger.info("fleet: exe: the golden #{source} #{why}; making #{name}")
 
     %{st | refresh: name, refresh_after: nil}
     |> task({:refresh, name}, fn -> make_golden(opts, source, name, cpu, memory) end)
@@ -528,17 +593,19 @@ defmodule Rigd.Fleet.Exe do
 
   defp make_golden(opts, source, name, cpu, memory) do
     host = name <> @suffix
+    made = DateTime.utc_now()
 
     with :ok <- copy(opts, source, name, cpu, memory),
          :ok <- api(opts, ["comment", name, "refreshing"], 60),
          :ok <- answers(opts, host),
-         {:ok, keys} <- setups(opts, host),
+         {:ok, keys, commits} <- setups(opts, host),
          keys = Map.put(keys, "golden", @format),
          :ok <- flush(opts, host),
          :ok <- api(opts, ["pause", name], 300),
-         :ok <- Golden.remember(keys_dir(opts), keys),
+         :ok <- Golden.remember(keys_dir(opts), keys, commits),
          :ok <- api(opts, ["comment", name, Golden.comment(keys)], 60) do
-      {:golden, %{name: name, digest: Golden.digest(keys), keys: keys}}
+      {:golden,
+       %{name: name, digest: Golden.digest(keys), keys: keys, made: made, commits: commits}}
     end
   end
 
@@ -552,10 +619,14 @@ defmodule Rigd.Fleet.Exe do
 
   # Every project's `gate golden` on `host`, in turn.
   defp setups(opts, host) do
-    Enum.reduce_while(opts[:projects], {:ok, %{}}, fn dir, {:ok, acc} ->
+    Enum.reduce_while(opts[:projects], {:ok, %{}, %{}}, fn dir, {:ok, acc, commits} ->
       case opts[:golden].run(opts[:gate], dir, host) do
-        {:green, _project, keys} -> {:cont, {:ok, Map.merge(acc, keys)}}
-        other -> {:halt, other}
+        {:green, _project, keys, commit} ->
+          commits = if commit, do: Map.put(commits, Path.basename(dir), commit), else: commits
+          {:cont, {:ok, Map.merge(acc, keys), commits}}
+
+        other ->
+          {:halt, other}
       end
     end)
   end

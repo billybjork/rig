@@ -63,6 +63,9 @@ defmodule Rigd.FleetExeTest do
 
   defmodule Golden do
     @moduledoc "Each project's keys and setup as the test sets them in persistent_term."
+    @head String.duplicate("f", 40)
+    def head, do: @head
+
     def keys(gate, dir) do
       if :persistent_term.get({__MODULE__, :slow}, false) do
         Process.sleep(20)
@@ -76,10 +79,15 @@ defmodule Rigd.FleetExeTest do
       File.write!(:persistent_term.get({__MODULE__, :log}), "golden #{host}\n", [:append])
 
       case :persistent_term.get({__MODULE__, :result}, nil) do
-        nil -> {:green, "proj", :persistent_term.get({__MODULE__, :target})}
+        nil -> {:green, "proj", :persistent_term.get({__MODULE__, :target}), @head}
         result -> result
       end
     end
+
+    # As far behind as the test says, until a golden is made at the head.
+    def behind(_dir, @head), do: 0
+    def behind(_dir, nil), do: 0
+    def behind(_dir, _commit), do: :persistent_term.get({__MODULE__, :behind}, 0)
   end
 
   setup %{tmp_dir: tmp} do
@@ -95,6 +103,7 @@ defmodule Rigd.FleetExeTest do
     on_exit(fn ->
       :persistent_term.erase({Golden, :result})
       :persistent_term.erase({Golden, :slow})
+      :persistent_term.erase({Golden, :behind})
     end)
 
     opts = [
@@ -309,6 +318,57 @@ defmodule Rigd.FleetExeTest do
     a = lease(opts)
     assert %{"granted" => _} = recv(a)
     assert calls(root) =~ "exe.dev cp #{name} rig-part-"
+  end
+
+  describe "a golden whose keys are current but whose commit main has left behind" do
+    setup %{root: root} do
+      golden(root)
+      at = %{"proj" => String.duplicate("a", 40)}
+      Rigd.Fleet.Golden.remember(Path.join(root, "golden-keys"), @keys, at)
+      :persistent_term.put({Golden, :behind}, 50)
+      :ok
+    end
+
+    defp created(root, ago_min) do
+      at = DateTime.utc_now() |> DateTime.add(-ago_min, :minute) |> DateTime.to_iso8601()
+      File.write!(Path.join([root, "vms", "rig-golden", "created"]), at)
+    end
+
+    test "is remade at the parts' size, once; its commit is kept", %{root: root, opts: opts} do
+      created(root, 61)
+      start(Keyword.put(opts, :keys_every_ms, 50))
+      until(fn -> Exe.status().golden not in [nil, "rig-golden"] end)
+      %{golden: name} = Exe.status()
+      assert calls(root) =~ "exe.dev cp rig-golden #{name} --standalone --cpu=4 --memory=8GB"
+
+      assert Rigd.Fleet.Golden.commits(
+               Path.join(root, "golden-keys"),
+               Rigd.Fleet.Golden.digest(@keys)
+             ) == %{"proj" => Golden.head()}
+
+      Process.sleep(200)
+      assert Exe.status().golden == name
+      assert Exe.status().behind == 0
+      assert File.read!(Path.join(root, "golden.log")) == "golden #{name}.exe.xyz\n"
+    end
+
+    test "is kept until the floor passes", %{root: root, opts: opts} do
+      created(root, 30)
+      start(Keyword.put(opts, :keys_every_ms, 50))
+      until(fn -> Exe.status().behind == 50 end)
+      Process.sleep(200)
+      assert Exe.status().golden == "rig-golden"
+      refute File.exists?(Path.join(root, "golden.log"))
+    end
+
+    test "is kept while main has moved less than the limit", %{root: root, opts: opts} do
+      created(root, 600)
+      :persistent_term.put({Golden, :behind}, 29)
+      start(Keyword.put(opts, :keys_every_ms, 50))
+      until(fn -> Exe.status().behind == 29 end)
+      Process.sleep(200)
+      assert Exe.status().golden == "rig-golden"
+    end
   end
 
   test "a read of the keys slower than the interval does not end the reads",

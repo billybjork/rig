@@ -10,6 +10,8 @@ defmodule Rigd.Fleet.Golden do
   by their digest (`comment/1`, `held/1`).
   """
 
+  require Logger
+
   @doc """
   A golden's comment: `golden <digest>` (`digest/1`). exe.dev refuses a
   comment past 200 bytes, and naming each key outgrew that at seven
@@ -51,11 +53,46 @@ defmodule Rigd.Fleet.Golden do
     end
   end
 
-  @doc "Keeps `keys` in `dir` under their digest, for `recall/2`."
-  def remember(dir, keys) do
+  @doc """
+  Keeps `keys` in `dir` under their digest, for `recall/2`, with the commit
+  each project's golden was made at (`%{"<project>" => sha}`), for `commits/2`.
+  """
+  def remember(dir, keys, commits \\ %{}) do
     File.mkdir_p!(dir)
     text = Enum.map_join(Enum.sort(keys), "", fn {k, v} -> "#{k} #{v}\n" end)
-    File.write!(Path.join(dir, digest(keys)), text)
+    at = Enum.map_join(Enum.sort(commits), "", fn {k, v} -> "at #{k} #{v}\n" end)
+    File.write!(Path.join(dir, digest(keys)), text <> at)
+  end
+
+  @doc "The commits `remember/3` kept under `digest`, `%{}` when none."
+  def commits(dir, digest) do
+    case File.read(Path.join(dir, digest)) do
+      {:ok, text} ->
+        for [_, k, v] <- Regex.scan(~r/^at ([\w.-]+) ([0-9a-f]{40})$/m, text),
+            into: %{},
+            do: {k, v}
+
+      _ ->
+        %{}
+    end
+  end
+
+  @doc """
+  How many Elixir sources (`*.ex`) differ between `commit` and the
+  `origin/main` the last `keys/2` fetched: what each part compiles again
+  before its checks. 0 when the commit is unknown.
+  """
+  def behind(_dir, nil), do: 0
+
+  def behind(dir, commit) do
+    case git(dir, ["diff", "--name-only", "--no-renames", commit, "origin/main", "--", "*.ex"]) do
+      {:ok, out} ->
+        out |> String.split("\n", trim: true) |> length()
+
+      {:error, why} ->
+        Logger.warning("fleet: exe: how far #{dir} moved: #{why}")
+        0
+    end
   end
 
   @doc """
@@ -95,7 +132,7 @@ defmodule Rigd.Fleet.Golden do
 
   @doc """
   The project's setup on the VM `vm` (a `<vm>.exe.xyz` host): `{:green, name,
-  keys}`, `{:red, why}` (`gate golden` exited 1: not the VM's doing),
+  keys, commit}`, `{:red, why}` (`gate golden` exited 1: not the VM's doing),
   `{:vm_failed, why}`, or `{:laptop, why}` when git failed here (no
   network, DNS): not the VM's doing either.
   """
@@ -112,10 +149,11 @@ defmodule Rigd.Fleet.Golden do
       {out, status} = cmd(gate, ["golden", vm], tmp, 4 * 3600)
       File.write!(log, out)
       {keys, _} = cmd(gate, ["keys", "HEAD"], tmp, 120)
+      head = git(tmp, ["rev-parse", "HEAD"])
       git(dir, ["worktree", "remove", "--force", tmp])
 
       case status do
-        0 -> {:green, name, parse_keys(keys)}
+        0 -> {:green, name, parse_keys(keys), commit(head)}
         1 -> {:red, "#{name}'s golden setup exited 1 (#{log})"}
         _ -> {:vm_failed, "#{name}'s golden setup: exit #{status} (#{log})"}
       end
@@ -123,6 +161,9 @@ defmodule Rigd.Fleet.Golden do
       {:error, why} -> {:laptop, why}
     end
   end
+
+  defp commit({:ok, out}), do: String.trim(out)
+  defp commit({:error, _}), do: nil
 
   # The worktrees an earlier run on `vm` left when rigd was killed
   # under it: none runs now, since a golden is made one project at a time.

@@ -67,6 +67,8 @@ if e:
     print(f"golden:  {current or 'keys unknown'}")
     if e["target"] and e["target"] != e["keys"]:
         print("main:    " + "  ".join(f"{k} {v}" for k, v in sorted(e["target"].items())))
+    if e.get("behind"):
+        print(f"behind:  {e['behind']} Elixir sources of main's since the golden")
     if e["why"]:
         print(f"last:    {e['why']}")
     for name, v in sorted(e["leases"].items()):

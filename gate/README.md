@@ -116,8 +116,9 @@ VM: the tools, the project's setup, and each warm cache, one short step
 at a time, each up to three tries; it runs no part. rigd's `Fleet` runs
 it for each project on a new `rig-golden-*` VM when `gate keys
 origin/main` (the stamp and each warm cache's key) no longer matches the
-golden's comment, syncs its disk, pauses it, and comments it
-(rig's `rigd/README.md`, "Fleet").
+golden's comment, or `main` has changed many of a project's sources since
+the golden, syncs its disk, pauses it, and comments it (rig's
+`rigd/README.md`, "Fleet").
 
 ## The workbench
 

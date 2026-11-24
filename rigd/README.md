@@ -89,6 +89,15 @@ name, the VM sizes and the cap.
   `Rigd.Fleet.Exe`), so a change to how a golden is made remakes it. Leases
   go on from the old golden meanwhile; a red `main` keeps it and tries
   again in 30 minutes. Never remove a `rig-golden*` VM by hand.
+- **A stale golden** is remade too. Each part compiles what `main` changed
+  since the golden before its checks (soco, 2026-11-23, 6 hours old: 38 s
+  in dev, 48 s in test; 1 s on a fresh one). So at that same read, a golden
+  at least 60 minutes old (`exe.refresh.minutes`) is remade when `main` has
+  changed at least 30 of a project's `*.ex` files (`exe.refresh.files`)
+  since the commit it was made at, kept with its keys. With its keys
+  current there is no cold cache to build, so it takes the parts' size; it
+  still compiles every build, since `gate golden` builds each warm cache
+  whether or not its key changed. `rigd fleet` says how far behind it is.
 - **The sweep**, every 10 minutes and at start, removes part VMs nothing
   leases and golden-named VMs that are neither the golden nor the one
   being made.
