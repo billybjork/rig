@@ -74,6 +74,18 @@ in the project.
   roll is not retried: its PRs are landed, not live, until a later roll.
   A merged PR still labeled when a worker starts (one stopped mid-roll)
   waits for a roll like any other.
+- **Its branch** (`Shipyard.Branch`) is deleted from GitHub as a landed
+  ship ends, live or not, just before its result. GitHub must report the
+  PR merged and the branch must still be at the head it merged (the lease;
+  with `squash` that is the gated head, not the commit on `main`), so a
+  branch a session has pushed its next work to stays until that ships.
+  `main`, a fork's branch, and the head or base of an open PR stay, as
+  does one whose merge landed another tree than the gated one. A branch
+  GitHub already deleted is nothing to do. What happened is a line in
+  `worker.log`, a failure a warning; it never changes a ship's result. A
+  session that reuses its branch fetches with `--prune` before a bare
+  `--force-with-lease`, which is refused against a deleted branch its
+  clone still remembers. A red or sent-back PR keeps its branch.
 - **The record** is one comment per ship on its PR, led by
   `<!-- shipyard -->`: `ship: live.`, `ship: red.` (the digest),
   `ship: landed, not live.`, or `ship: sent back.` (the reason). The label

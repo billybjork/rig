@@ -14,9 +14,33 @@ defmodule Shipyard.WorkerTest do
 
   # The queue is $QUEUE/pr-<n> ("branch<TAB>labeled at<TAB>title"); a
   # comment is appended to $QUEUE/comments-<n>; every call is a line in
-  # $STUB_LOG.
+  # $STUB_LOG. A PR's head query reads its branch's tip from the origin; the
+  # PR is merged once main has it or a squash did ($QUEUE/merged-<n>), at
+  # $QUEUE/head-<n> when that is there (GitHub keeps the merged head), else
+  # at the tip. $QUEUE/state-<n> says otherwise, $QUEUE/open-<n> is an open
+  # PR on the branch, and HEAD_EXIT fails the query.
   @gh ~S"""
   #!/bin/bash
+  if [[ "$*" == *headRefOid* ]]; then
+    [ "${HEAD_EXIT:-0}" = 0 ] || { echo "HTTP 502" >&2; exit "$HEAD_EXIT"; }
+    for arg in "$@"; do
+      case "$arg" in number=*) n=${arg#*=} ;; branch=*) branch=${arg#*=} ;; esac
+    done
+    tip=$(git --git-dir="$ORIGIN" rev-parse -q --verify "refs/heads/$branch")
+    head=$tip
+    [ -f "$QUEUE/head-$n" ] && head=$(cat "$QUEUE/head-$n")
+    state=OPEN
+    [ -f "$QUEUE/merged-$n" ] && state=MERGED
+    [ -n "$head" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$head" main && state=MERGED
+    [ -f "$QUEUE/state-$n" ] && state=$(cat "$QUEUE/state-$n")
+    ref=null
+    [ -n "$tip" ] && ref="{\"target\":{\"oid\":\"$tip\"}}"
+    open=
+    [ -f "$QUEUE/open-$n" ] && open="{\"number\":$(cat "$QUEUE/open-$n")}"
+    [ -f "$QUEUE/move-$n" ] && bash "$QUEUE/move-$n"
+    echo "{\"data\":{\"repository\":{\"pullRequest\":{\"state\":\"$state\",\"isCrossRepository\":false,\"headRefOid\":\"$head\",\"headRef\":$ref},\"heads\":{\"nodes\":[]},\"bases\":{\"nodes\":[$open]}}}}"
+    exit 0
+  fi
   case "$1 $2" in
     "api graphql")
       nodes=""
@@ -40,6 +64,7 @@ defmodule Shipyard.WorkerTest do
     "pr merge")
       sha=${@: -1}
       echo "merge $3 $sha" >>"$STUB_LOG"
+      echo "$sha" >"$QUEUE/head-$3"
       git --git-dir="$ORIGIN" update-ref refs/heads/main \
         "$(git --git-dir="$ORIGIN" commit-tree "$sha^{tree}" -p main -m "squash #$3")"
       git --git-dir="$ORIGIN" rev-parse main >"$QUEUE/.merged-$3"
@@ -223,6 +248,19 @@ defmodule Shipyard.WorkerTest do
   defp events(o), do: o.log |> File.read!() |> String.split("\n", trim: true)
   defp comments(o, n), do: File.read!(Path.join(o.queue, "comments-#{n}"))
   defp pushes(o), do: for("push " <> json <- events(o), do: JSON.decode!(json))
+
+  defp branches(o),
+    do:
+      sh!(o.tmp, "git --git-dir=origin.git for-each-ref --format='%(refname:short)'", o.env)
+      |> String.split("\n")
+
+  # The result every landed scene below must still get.
+  defp assert_live(o, number) do
+    assert comments(o, number) =~ "ship: live. Merged as `"
+    assert Path.wildcard(Path.join(o.queue, "pr-*")) == []
+    assert [%{outcome: "live"}] = rows(o)
+  end
+
   defp origin(o, ref), do: sh!(o.tmp, "git --git-dir=origin.git rev-parse #{ref}", o.env)
 
   # The rows the worker kept (`Shipyard.Record`), each the fields a scene
@@ -282,7 +320,7 @@ defmodule Shipyard.WorkerTest do
            }
 
     # Each gate saw the branch on top of the main it lands on, and that
-    # is what reached the branch on origin.
+    # is what main landed; neither branch is on origin any longer.
     sh!(
       tmp,
       "git --git-dir=origin.git merge-base --is-ancestor #{moved_main} #{first_gate}",
@@ -290,7 +328,7 @@ defmodule Shipyard.WorkerTest do
     )
 
     sh!(tmp, "git --git-dir=origin.git merge-base --is-ancestor main~1 #{second_gate}", o.env)
-    assert origin(o, "claude/first") == first_gate
+    assert branches(o) == ["main"]
     assert origin(o, "main^{tree}") == origin(o, "#{second_gate}^{tree}")
 
     assert stamp_one =~
@@ -485,6 +523,8 @@ defmodule Shipyard.WorkerTest do
     assert [%{"message" => message, "tags" => ["warning"]}] = pushes(o)
     assert message =~ ~r/^landed, not live\. The roll of \w{8} failed\.\nclaude\/roll$/
     assert origin(o, "main^{tree}") != origin(o, "main~1^{tree}")
+    # Landed is enough: nothing is left on its branch.
+    assert branches(o) == ["main"]
     assert [%{outcome: "not_live", cause: "roll"}] = rows(o)
   end
 
@@ -507,11 +547,130 @@ defmodule Shipyard.WorkerTest do
     refute Enum.any?(events(o), &String.starts_with?(&1, "merge "))
     assert origin(o, "main") == gated
     assert rolled == gated
-    assert origin(o, "claude/docs") == gated
+    assert branches(o) == ["main"]
     assert sh!(tmp, "git --git-dir=origin.git log -1 --format=%s main", o.env) == "claude/docs"
 
     assert comments(o, 9) =~
              "ship: live. Merged as `#{String.slice(gated, 0, 8)}` after bash scripts/check-remote.sh check-fast passed"
+  end
+
+  for merge <- ["push", "squash"] do
+    test "with merge: #{merge} a branch that moved after its landing is kept, and the ship is live",
+         %{tmp_dir: tmp} do
+      o = setup_origin(tmp, [], merge: unquote(merge))
+      queue!(o, 9, "claude/reused", "lib/a.ex", "2026-10-09T10:00:00Z")
+
+      # The roll is where a session pushes its next work to the branch; the
+      # head the PR merged stays what it was.
+      write_exec!(Path.join(o.seed, "scripts/roll.sh"), ~S"""
+      #!/bin/bash
+      git --git-dir="$ORIGIN" rev-parse claude/reused >"$QUEUE/head-9"
+      git --git-dir="$ORIGIN" update-ref refs/heads/claude/reused \
+        "$(git --git-dir="$ORIGIN" commit-tree "claude/reused^{tree}" -p claude/reused -m next)"
+      echo "roll: rolled web"
+      """)
+
+      sh!(
+        o.seed,
+        "git checkout -q -B main origin/main && git commit -qam roll && git push -q origin main",
+        o.env
+      )
+
+      drain!(o)
+
+      assert branches(o) == ["claude/reused", "main"]
+
+      assert sh!(tmp, "git --git-dir=origin.git log -1 --format=%s claude/reused", o.env) ==
+               "next"
+
+      assert_live(o, 9)
+    end
+  end
+
+  test "a branch that moves between its check and its delete is kept by the lease",
+       %{tmp_dir: tmp} do
+    o = setup_origin(tmp, [], merge: "push")
+    queue!(o, 9, "claude/race", "lib/a.ex", "2026-10-09T10:00:00Z")
+
+    File.write!(Path.join(o.queue, "move-9"), ~S"""
+    git --git-dir="$ORIGIN" update-ref refs/heads/claude/race \
+      "$(git --git-dir="$ORIGIN" commit-tree "claude/race^{tree}" -p claude/race -m next)"
+    """)
+
+    {_, log} = ExUnit.CaptureLog.with_log(fn -> drain!(o) end)
+
+    assert log =~ "branch claude/race not deleted: git push exited"
+    assert sh!(tmp, "git --git-dir=origin.git log -1 --format=%s claude/race", o.env) == "next"
+    assert_live(o, 9)
+  end
+
+  test "a branch already gone from GitHub is nothing to do", %{tmp_dir: tmp} do
+    o = setup_origin(tmp, [])
+    queue!(o, 9, "claude/gone", "lib/a.ex", "2026-10-09T10:00:00Z")
+
+    # GitHub's own delete_branch_on_merge, before the roll ends.
+    write_exec!(Path.join(o.seed, "scripts/roll.sh"), ~S"""
+    #!/bin/bash
+    git --git-dir="$ORIGIN" update-ref -d refs/heads/claude/gone
+    """)
+
+    sh!(
+      o.seed,
+      "git checkout -q -B main origin/main && git commit -qam roll && git push -q origin main",
+      o.env
+    )
+
+    {_, log} = ExUnit.CaptureLog.with_log(fn -> drain!(o) end)
+
+    assert log =~ "branch claude/gone was already gone"
+    refute log =~ "not deleted"
+    assert_live(o, 9)
+  end
+
+  test "a failed delete is a warning, and the ship is live", %{tmp_dir: tmp} do
+    o = setup_origin(tmp, [{"HEAD_EXIT", "1"}])
+    queue!(o, 9, "claude/stuck", "lib/a.ex", "2026-10-09T10:00:00Z")
+
+    {_, log} = ExUnit.CaptureLog.with_log(fn -> drain!(o) end)
+
+    assert log =~ "branch claude/stuck not deleted: gh api exited 1"
+    assert branches(o) == ["claude/stuck", "main"]
+    assert_live(o, 9)
+  end
+
+  for {scene, file, text, why} <- [
+        {"GitHub does not report merged", "state-9", "OPEN", "GitHub reports the PR open"},
+        {"another open PR is on", "open-9", "12", "#12 is open on it"}
+      ] do
+    test "a branch #{scene} is kept, and the ship is live", %{tmp_dir: tmp} do
+      o = setup_origin(tmp, [])
+      queue!(o, 9, "claude/held", "lib/a.ex", "2026-10-09T10:00:00Z")
+      File.write!(Path.join(o.queue, unquote(file)), unquote(text))
+
+      {_, log} = ExUnit.CaptureLog.with_log(fn -> drain!(o) end)
+
+      assert log =~ unquote(why)
+      assert branches(o) == ["claude/held", "main"]
+      assert_live(o, 9)
+    end
+  end
+
+  test "a worker stopped between a landing and its delete leaves both to the next",
+       %{tmp_dir: tmp} do
+    o = setup_origin(tmp, [])
+    head = queue!(o, 5, "claude/old", "lib/a.ex", "2026-10-09T09:00:00Z")
+    sh!(o.seed, "git push -q origin HEAD:main", o.env)
+    File.write!(Path.join(o.queue, "merged-5"), head)
+
+    drain!(o)
+
+    assert branches(o) == ["main"]
+    assert_live(o, 5)
+  end
+
+  test "main is never deleted" do
+    assert {:kept, "it is main"} =
+             Shipyard.Branch.delete(%Shipyard{}, %{number: 1, branch: "main"})
   end
 
   test "a red history rule ends the ship before any gate", %{tmp_dir: tmp} do

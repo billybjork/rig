@@ -17,7 +17,8 @@ defmodule Shipyard.Worker do
   starts whenever one waits and none runs; when it ends, every waiting PR
   whose merge is in the commit it rolled gets its result, naming that
   roll, and the rest wait for the next. A failed roll is not retried: its
-  PRs are landed, not live. A merged PR still labeled when the worker
+  PRs are landed, not live. Before either result the PR's branch is deleted
+  from GitHub (`Shipyard.Branch`). A merged PR still labeled when the worker
   starts (a worker stopped mid-roll) waits for a roll like any other.
 
   Every entry run, a retry included, leaves a row (`Shipyard.Record`): how
@@ -28,7 +29,7 @@ defmodule Shipyard.Worker do
 
   use GenServer, restart: :transient
   require Logger
-  alias Shipyard.{GitHub, Notify, Record, Roll, Status}
+  alias Shipyard.{Branch, GitHub, Notify, Record, Roll, Status}
 
   @outcomes %{live: "live", not_live: "landed, not live", red: "red", back: "sent back"}
 
@@ -103,16 +104,18 @@ defmodule Shipyard.Worker do
       Enum.reduce(waiting, s, fn number, s ->
         {landed, s} = pop_in(s.landed[number])
 
-        if landed,
-          do:
-            ending(
-              s,
-              landed.pr,
-              :not_live,
-              "#{landed.text}. #{text}",
-              %{landed.run | cause: "roll-crash"},
-              "The roll crashed."
-            )
+        if landed do
+          run = %{landed.run | cause: "roll-crash"}
+
+          landed_ending(
+            s,
+            landed.pr,
+            :not_live,
+            "#{landed.text}. #{text}",
+            run,
+            "The roll crashed."
+          )
+        end
 
         s
       end)
@@ -245,10 +248,26 @@ defmodule Shipyard.Worker do
 
     for {_, landed} <- covered do
       run = %{landed.run | cause: cause || landed.run.cause}
-      ending(s, landed.pr, outcome, "#{landed.text}. #{name} #{text}", run, rolled)
+      landed_ending(s, landed.pr, outcome, "#{landed.text}. #{name} #{text}", run, rolled)
     end
 
     %{s | rolling: nil, landed: Map.new(waiting), idle_since: now()}
+  end
+
+  # The end of a ship that landed, live or not: nothing is left on its
+  # branch, so that goes first (`Shipyard.Branch`). A branch that stays
+  # changes nothing else.
+  defp landed_ending(s, pr, outcome, text, run, rolled) do
+    branch = "ship: ##{pr.number}'s branch #{pr.branch}"
+
+    case Branch.delete(s.ship, pr) do
+      {:deleted, tip} -> Logger.info("#{branch} deleted at #{tip}")
+      :gone -> Logger.info("#{branch} was already gone")
+      {:kept, why} -> Logger.info("#{branch} kept: #{why}")
+      {:failed, why} -> Logger.warning("#{branch} not deleted: #{why}")
+    end
+
+    ending(s, pr, outcome, text, run, rolled)
   end
 
   # A ship's end: its row, its result on the PR, and Billy's notification.

@@ -28,6 +28,21 @@ defmodule Shipyard.GitHub do
   }
   """
 
+  # Open PRs on the branch, as their head or their base: closed or
+  # retargeted if it went. `merged` is the head the PR merged; GitHub does
+  # not move it when the branch moves later.
+  @head """
+  query($owner: String!, $name: String!, $number: Int!, $branch: String!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        state isCrossRepository headRefOid headRef { target { oid } }
+      }
+      heads: pullRequests(states: [OPEN], headRefName: $branch, first: 1) { nodes { number } }
+      bases: pullRequests(states: [OPEN], baseRefName: $branch, first: 1) { nodes { number } }
+    }
+  }
+  """
+
   @doc """
   The labeled PRs, each `%{number, title, url, branch, queued_at, merged}`,
   in order; `merged` is the merge commit of one that has landed, else nil.
@@ -92,6 +107,44 @@ defmodule Shipyard.GitHub do
           String.starts_with?(body, Shipyard.marker()),
           do: body
         )
+    }
+  end
+
+  @doc """
+  PR `pr`'s branch: `%{state, fork, merged, tip, open}`, where `merged` is
+  the PR's head, `tip` the branch's commit now (nil once it is gone) and
+  `open` the open PRs whose head or base it is (one of each).
+  """
+  def head(ship, pr, timeout) do
+    [owner, name] = String.split(ship.repo, "/")
+
+    args = [
+      "api",
+      "graphql",
+      "-f",
+      "query=#{@head}",
+      "-f",
+      "owner=#{owner}",
+      "-f",
+      "name=#{name}",
+      "-F",
+      "number=#{pr.number}",
+      "-f",
+      "branch=#{pr.branch}"
+    ]
+
+    %{"pullRequest" => found, "heads" => heads, "bases" => bases} =
+      ship
+      |> gh!(args, stderr_to_stdout: false, timeout: timeout)
+      |> JSON.decode!()
+      |> get_in(["data", "repository"])
+
+    %{
+      state: found["state"],
+      fork: found["isCrossRepository"],
+      merged: found["headRefOid"],
+      tip: get_in(found, ["headRef", "target", "oid"]),
+      open: for(%{"number" => number} <- heads["nodes"] ++ bases["nodes"], do: number)
     }
   end
 
@@ -161,11 +214,11 @@ defmodule Shipyard.GitHub do
     end
   end
 
-  defp gh(ship, args, opts \\ [stderr_to_stdout: false]),
+  defp gh(ship, args, opts),
     do: Cmd.run(ship, File.cwd!(), "gh", args, opts)
 
-  defp gh!(ship, args) do
-    case gh(ship, args) do
+  defp gh!(ship, args, opts \\ [stderr_to_stdout: false]) do
+    case gh(ship, args, opts) do
       {out, 0} -> out
       {out, status} -> raise "gh #{hd(args)} exited #{status}: #{out}"
     end
