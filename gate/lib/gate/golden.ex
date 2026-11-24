@@ -31,9 +31,7 @@ defmodule Gate.Golden do
     sha = Check.git!(config, ["rev-parse", "HEAD"])
     stamp = Stamp.stamp(config, sha)
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> Check.short(sha)
-
-    work =
-      Path.join(System.tmp_dir!(), "gate-golden-#{run}-#{System.unique_integer([:positive])}")
+    work = Gate.work!("gate-golden-#{run}")
 
     ctx = %Engine{
       config: config,

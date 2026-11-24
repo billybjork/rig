@@ -203,6 +203,9 @@ defmodule Gate.FakeFleet do
   def waiting(pid), do: GenServer.call(pid, :waiting)
   def leases(pid), do: GenServer.call(pid, :leases)
   def path(pid), do: GenServer.call(pid, :path)
+
+  @doc "Adds `hosts` to lease, to those waiting first."
+  def add(pid, hosts), do: GenServer.call(pid, {:add, hosts})
   def stop(pid), do: GenServer.stop(pid)
 
   @impl true
@@ -237,6 +240,9 @@ defmodule Gate.FakeFleet do
   def handle_call(:waiting, _from, st), do: {:reply, length(st.waiting), st}
   def handle_call(:leases, _from, st), do: {:reply, Enum.reverse(st.leases), st}
   def handle_call(:path, _from, st), do: {:reply, st.path, st}
+
+  def handle_call({:add, hosts}, _from, st),
+    do: {:reply, :ok, grant(%{st | idle: st.idle ++ hosts})}
 
   @impl true
   def handle_info({:conn, sock}, st) do

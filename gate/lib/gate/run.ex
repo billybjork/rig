@@ -36,7 +36,7 @@ defmodule Gate.Run do
     Status.report(:working, "gate-run", "preparing on exe.dev", command)
     sha = Check.git!(config, ["rev-parse", "HEAD"])
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> Check.short(sha)
-    work = Path.join(System.tmp_dir!(), "gate-run-#{run}-#{System.unique_integer([:positive])}")
+    work = Gate.work!("gate-run-#{run}")
     overlay = Path.join(work, "overlay")
 
     try do

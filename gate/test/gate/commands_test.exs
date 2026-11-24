@@ -13,6 +13,24 @@ defmodule Gate.CommandsTest do
     env
   end
 
+  test "work!: a folder of its own for each caller, readable, in the tmp dir" do
+    paths = for _ <- 1..50, do: Gate.work!("gate-work-test")
+    on_exit(fn -> Enum.each(paths, &File.rm_rf/1) end)
+
+    assert Enum.uniq(paths) == paths
+    assert Enum.all?(paths, &File.dir?/1)
+    assert Enum.all?(paths, &(Path.basename(&1) =~ ~r/\Agate-work-test-[0-9a-f]{12}\z/))
+  end
+
+  test "the runner makes every temporary folder with work!" do
+    users =
+      for file <- Path.wildcard(Path.join(Gate.root(), "lib/**/*.ex")),
+          File.read!(file) =~ ~r/tmp_dir|unique_integer/,
+          do: Path.relative_to(file, Gate.root())
+
+    assert users -- ["lib/gate.ex"] == []
+  end
+
   describe "run" do
     @describetag gate: %{"keep" => ["_build"]}
 
@@ -53,6 +71,58 @@ defmodule Gate.CommandsTest do
 
       assert status == 3
       assert err =~ "exit 3 in"
+    end
+
+    test "two runs that start in the same second each run their own working tree", env do
+      fleet = Fake.fleet([])
+      other = Path.join(env.tmp, "other")
+      Fake.git(env.tmp, ["clone", "-q", env.top, other])
+      File.write!(Path.join(env.top, "mine.txt"), "the first tree\n")
+      File.write!(Path.join(other, "mine.txt"), "the second tree\n")
+
+      # Each a process of its own with one scheduler, where unique integers
+      # come in the same order every time: the first run's clash, made sure.
+      ebin = Application.app_dir(:gate, "ebin")
+
+      # Each says it is up (`ready-*`) and starts when `go` appears.
+      go = Path.join(env.tmp, "go")
+
+      start = """
+      File.touch!(Path.join(#{inspect(env.tmp)}, "ready-" <> System.pid()))
+      wait = fn wait -> File.exists?(#{inspect(go)}) || (Process.sleep(5) && wait.(wait)) end
+      wait.(wait)
+      Gate.CLI.main(["run", "bash", "cmd.sh", "cat", "mine.txt"])
+      """
+
+      runs =
+        for top <- [env.top, other] do
+          Task.async(fn ->
+            System.cmd("elixir", ["--erl", "+S 1:1", "-pa", ebin, "-e", start],
+              env: [{"GATE_CWD", top}],
+              stderr_to_stdout: true
+            )
+          end)
+        end
+
+      await(fn -> match?([_, _], Path.wildcard(Path.join(env.tmp, "ready-*"))) end)
+      # Early in a second, so both are named in it.
+      Process.sleep(1050 - rem(System.os_time(:millisecond), 1000))
+      File.touch!(go)
+
+      # Neither gets a VM until both have packed their trees.
+      await(fn -> Gate.FakeFleet.waiting(fleet) == 2 end)
+      Gate.FakeFleet.add(fleet, [vm(1), vm(2)])
+      [{first, 0}, {second, 0}] = Task.await_many(runs, 60_000)
+
+      assert first =~ "the first tree"
+      refute first =~ "the second tree"
+      assert second =~ "the second tree"
+      refute second =~ "the first tree"
+
+      # They did start in one second, at one commit.
+      logs = Path.wildcard(Path.join(env.logs, "gate-run-*.log"))
+      assert [_, _] = logs
+      assert [_] = Enum.uniq_by(logs, &Regex.run(~r/\d{8}-\d{6}-[0-9a-f]{8}/, &1))
     end
 
     test "an app build holding an empty .beam (an unsynced host's) is dropped before setup",
@@ -112,6 +182,14 @@ defmodule Gate.CommandsTest do
       assert status == 125
       assert err =~ "rigd's Fleet does not answer"
       assert err =~ "(exit 125, not the command's result)"
+    end
+  end
+
+  defp await(done?, tries \\ 300) do
+    cond do
+      done?.() -> :ok
+      tries == 0 -> flunk("timed out")
+      true -> Process.sleep(50) && await(done?, tries - 1)
     end
   end
 

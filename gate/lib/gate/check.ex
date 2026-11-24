@@ -36,7 +36,7 @@ defmodule Gate.Check do
     stamp = Stamp.stamp(config, sha)
     run = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S") <> "-" <> short(sha)
     root = System.get_env("SHIPYARD_STATUS_ID", "gate")
-    work = Path.join(System.tmp_dir!(), "gate-#{run}-#{System.unique_integer([:positive])}")
+    work = Gate.work!("gate-#{run}")
 
     ctx = %Engine{
       config: config,

@@ -64,7 +64,6 @@ defmodule Gate.Engine do
   """
   def run(%__MODULE__{} = ctx, assigned) do
     File.mkdir_p!(ctx.config.logs)
-    File.mkdir_p!(ctx.work)
     state = %{parts: %{}, results: %{}, pending: %{}}
 
     state =
